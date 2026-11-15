@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Radar</title>
+<meta name="description" content="Protocols with no token on record, ranked by the implied value of a launch, each with a farm plan.">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="14"/><circle cx="16" cy="16" r="9"/><circle cx="16" cy="16" r="4"/><path d="M16 16 L28 9"/></svg>
+    <div>
+      <h1>Token Radar</h1>
+      <p id="meta" class="sub"></p>
+    </div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="board">Board</button>
+    <button role="tab" data-tab="peers">Traded peers</button>
+    <button role="tab" data-tab="method">Method</button>
+  </nav>
+</header>
+<section id="kpis" class="kpis" aria-label="Summary"></section>
+<main id="view"></main>
+<aside id="detail" class="detail" aria-label="Protocol detail" hidden></aside>
+<footer class="foot">Implied values are this model's own estimate from the snapshot's figures: what a token could be worth if the record stayed as it is. They do not predict whether or when a token launches, and nothing here is financial advice.</footer>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
