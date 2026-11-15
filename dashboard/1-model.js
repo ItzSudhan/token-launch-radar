@@ -1,7 +1,8 @@
 /* Token Radar, the model. ONE file prices everything: main.ts requires it to write board.json, and
  * index.html loads it to recompute every figure on the page from the sealed snapshot (../data.js is the
  * snapshot's protocols verbatim plus board.json's ranks and values, so the page checks itself).
- * No protocol is named anywhere in it: rules read names only for words and stems. */
+ * No protocol is priced by name: the only names in it are the eight exchanges of the house's own
+ * watchlist rule, which sets their products aside. */
 (function (root) {
   'use strict';
 
@@ -10,8 +11,9 @@
     pseudoComps: 4,       // zero-effect comps that pull each sector's effect toward the curve
     receiptBand: 0.015,   // cap within 1.5% of TVL: the 'token' is the deposit receipt, not a launch
     growthCap: 0.4,       // excess 7-day growth carried forward, capped at +-40%
-    ageShare: 0.5,        // only half the fitted age slope is applied: the blind test is no better with it
-    ageClamp: [0.8, 1.3],
+    ageShare: 0.25,       // a quarter of the fitted age slope: newer tokens price richer in every cohort
+    ageClamp: [0.9, 1.15], // split, but the blind test gains nothing from it, so the tilt is kept slight
+    youngDays: 540,       // under 18 months on record the blind test misses far wider: the range, not the price
     kinToken: 0.25,       // a watchlist row whose name stem already carries a token on record
     capital: 1000, airdropShare: 0.10, tbill: 0.04, pointsWindow: 365
   };
@@ -88,11 +90,11 @@
       var abs = errors.map(Math.abs);
       return { miss: Math.pow(10, median(abs)), within3: abs.filter(function (e) { return e <= log10(3); }).length / abs.length, n: abs.length };
     };
-    var names = ['One flat cap/TVL multiple', 'Size curve', 'Size curve + sector', 'Full model'], residuals = [];
+    var names = ['One flat cap/TVL multiple', 'Size curve', 'Size curve + sector', 'Full model'];
     var ladder = names.map(function (name, level) {
       var errors = comps.map(function (c, i) {
         var e = c.y - predictLog(fitCurve(comps.filter(function (_, j) { return j !== i; }), level), c);
-        if (level === 3) { c.blind = Math.pow(10, c.y - e); residuals.push(e); }
+        if (level === 3) c.blind = Math.pow(10, c.y - e);
         return e;
       });
       var r = miss(errors); r.name = name; return r;
@@ -100,14 +102,17 @@
     // cohort split: fit on protocols tracked 900+ days (or undated), price the newer ones
     var older = comps.filter(function (c) { return !c.age || c.age >= 900; }), newer = comps.filter(function (c) { return c.age && c.age < 900; });
     var cohort = [3, 0].map(function (level) { var f = fitCurve(older, level); return miss(newer.map(function (c) { return c.y - predictLog(f, c); })); });
+    // how sure a price is depends on time on record: the blind misses of young tokens against the rest.
+    // Half of each group's misses fall within its figure, and that sets every board row's range.
+    var young = comps.filter(function (c) { return c.age != null && c.age < CONFIG.youngDays; });
+    var blindMiss = function (list) { return miss(list.map(function (c) { return c.y - log10(c.blind); })); };
     return {
       ladder: ladder, cohort: { model: cohort[0], flat: cohort[1], older: older.length, newer: newer.length },
-      // the middle half of the blind misses: every board row's range is its value times these two
-      band: [0.25, 0.75].map(function (q) { return Math.pow(10, quantile(residuals, q)); })
+      spread: { young: blindMiss(young), seasoned: blindMiss(comps.filter(function (c) { return young.indexOf(c) < 0; })) }
     };
   }
 
-  /* ---- 2. FARM PLANS. Nine plays by mechanism. tx: transactions to [enter, qualify, each week, exit].
+  /* ---- 2. FARM PLANS. Ten plays by mechanism. tx: transactions to [enter, qualify, each week, exit].
    * pct: fees as a share of the ticket [once, each week]. carry: yearly interest as a share of the ticket.
    * min: minutes to [enter, qualify, each week]. {C} is the ticket, {C/4} a quarter of it. */
   var PLAYS = {
@@ -181,20 +186,21 @@
     var text = function (t) {
       return t.replace(/\{C(\/\d+)?\}/g, function (_, d) { return usd(d ? C / +d.slice(1) : C); }).replace(/\{N\}/g, N).replace(/\{chain\}/g, chain);
     };
+    var ahead = Math.min(row.age == null ? CONFIG.pointsWindow : row.age, CONFIG.pointsWindow) / 2;
+    var snapshotSlice = row.value * share * C / (row.tvl + C), slice = snapshotSlice * H / (ahead + H);
+    var gasBudget = Math.max(1, Math.ceil(2 * gas * (play.tx[0] + play.tx[1] + weeks * play.tx[2] + play.tx[3] + 2)));   // twice the plan's gas
     var steps = [
-      ['Fund', 'Withdraw ' + usd(C) + ' (USDC, or the asset it takes) and a few dollars of gas from an exchange to a fresh wallet on ' + chain + ', used for this farm only.', fund, 10],
+      ['Fund', 'Withdraw ' + usd(C) + ' (USDC, or the asset it takes) and ' + usd(gasBudget) + ' for gas from an exchange to a fresh wallet on ' + chain + ', used for this farm only.', fund, 10],
       ['Verify', 'Open ' + N + ' from defillama.com/protocol/' + row.slug + ', not a search ad; check contracts, audits, that it still lists no token, and any points page.', 0, 15],
       ['Enter', text(play.enter), play.tx[0] * gas + play.pct[0] * C, play.min[0]],
       ['Qualify', text(play.qualify), play.tx[1] * gas + play.carry * C * H / 365, play.min[1]],
       ['Upkeep', 'Each week for ' + weeks + ' weeks, ' + play.watch + '; log it.', weeks * (play.tx[2] * gas + play.pct[1] * C), weeks * play.min[2]],
       ['Stop rule', 'Leave early if ' + play.stop + ', TVL drops under ' + usd(row.tvl * 0.7) + ' (-30%), or a token is announced with nothing for depositors.', 0, 5],
-      ['Claim', 'If a token launches, claim only from ' + N + '\'s own site, never pay to claim, then revoke approvals.', gas, 10],
+      ['Claim', 'If a token launches, claim only from ' + N + '\'s own site, never pay to claim, then revoke approvals. At the implied ' + usd(row.value) + ' this ticket\'s slice is about ' + usd(slice) + '.', gas, 10],
       ['Exit', 'After ' + H + ' days or at the claim, unwind the position and send the funds back to the exchange.', (play.tx[3] + 1) * gas, 10]
     ];
     if (play.qualifyFirst) steps.splice(2, 2, steps[3], steps[2]);
     var fees = steps.reduce(function (s, x) { return s + x[2]; }, 0), minutes = steps.reduce(function (s, x) { return s + x[3]; }, 0);
-    var ahead = Math.min(row.age == null ? CONFIG.pointsWindow : row.age, CONFIG.pointsWindow) / 2;
-    var snapshotSlice = row.value * share * C / (row.tvl + C), slice = snapshotSlice * H / (ahead + H);
     var forgone = C * CONFIG.tbill * H / 365, net = slice - fees - forgone;
     // fees split into a fixed part (gas, funding) and a part that scales with the ticket, for the break-even
     var scaling = C * (play.pct[0] + weeks * play.pct[1] + play.carry * H / 365), perDollar = (slice - scaling - forgone) / C;
@@ -228,11 +234,12 @@
       if (reason) { aside.push({ slug: p.slug, name: p.name, category: p.category, tvl: p.tvl_usd, reason: reason }); return; }
       // above the floor and clear of every rule, yet off the watchlist: DefiLlama files it under a parent
       ctx.kin = kinSymbol ? 'token' : !listed && p.tvl_usd >= snapshot.floor_usd ? 'parent' : null;
-      var v = impliedValue(p, fit, ctx);
+      var v = impliedValue(p, fit, ctx), young = v.age != null && v.age < CONFIG.youngDays && tests.spread.young.n > 0;
+      var spread = (young ? tests.spread.young : tests.spread.seasoned).miss;
       rows.push({
         slug: p.slug, name: p.name, category: p.category || 'Uncategorised', sector: v.sector, chains: p.chains, tvl: p.tvl_usd,
         change7d: p.change_7d, excess: v.excess, age: v.age, tier: listed ? 'watchlist' : ctx.kin === 'parent' ? 'shared' : 'early',
-        kin: kinSymbol || null, value: v.value, curve: v.curve, factors: v.factors, low: v.value * tests.band[0], high: v.value * tests.band[1]
+        kin: kinSymbol || null, value: v.value, curve: v.curve, factors: v.factors, young: young, spread: spread, low: v.value / spread, high: v.value * spread
       });
     });
     rows.sort(function (a, b) { return b.value - a.value || (a.slug < b.slug ? -1 : 1); });

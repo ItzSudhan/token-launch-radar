@@ -111,7 +111,8 @@
       '<div class=\'how\'><h2>How a launch is priced ' + fn('impliedValue') + '</h2><code>10^' + fit.a.toFixed(2) + ' × TVL^' + fit.b.toFixed(3) + ' × sector × momentum × age × kinship</code>' +
       '<table><tr><th>Blind test: each traded token left out, then priced</th><th>miss</th><th>within 3×</th></tr>' +
       tests.ladder.map(function (l, i) { return '<tr' + (i === 3 ? ' class=\'on\'' : '') + '><td>' + l.name + '</td><td>' + times(l.miss) + '</td><td>' + Math.round(l.within3 * 100) + '%</td></tr>'; }).join('') +
-      '<tr><td>The ' + tests.cohort.newer + ' newest tokens, fit on the ' + tests.cohort.older + ' older</td><td>' + times(tests.cohort.model.miss) + '</td><td>flat ' + times(tests.cohort.flat.miss) + '</td></tr></table></div>' +
+      '<tr><td>The ' + tests.cohort.newer + ' newest tokens, fit on the ' + tests.cohort.older + ' older</td><td>' + times(tests.cohort.model.miss) + '</td><td>flat ' + times(tests.cohort.flat.miss) + '</td></tr>' +
+      '<tr><td>Under ' + Math.round(R.CONFIG.youngDays / 30) + ' months on record: a wider range</td><td>' + times(tests.spread.young.miss) + '</td><td>older ' + times(tests.spread.seasoned.miss) + '</td></tr></table></div>' +
       '<div class=\'chart\'>' + curveChart(250, 150) + '</div></section>';
   }
   function renderTabs() {
@@ -143,7 +144,7 @@
     }).join('') + '</tr></thead><tbody>' + list.map(function (r) {
       var p = r.now;
       return '<tr data-slug=\'' + r.slug + '\'><td class=\'n\'>' + r.rank + '</td>' +
-        '<td><b>' + esc(r.name) + '</b> ' + tag('tier', r.tier) + '<small>' + esc(r.category) + wide(' · ' + esc(r.chains[0] || '') + (r.chains.length > 1 ? ' +' + (r.chains.length - 1) : '')) + narrow(' · TVL ' + usd(r.tvl)) + '</small></td>' +
+        '<td><b>' + esc(r.name) + '</b> ' + tag('tier', r.tier) + '<small>' + esc(r.category) + wide(' · ' + esc(r.chains.slice(0, 2).join(', ')) + (r.chains.length > 2 ? ' +' + (r.chains.length - 2) : '')) + narrow(' · TVL ' + usd(r.tvl)) + '</small></td>' +
         '<td class=\'r wide\'>' + usd(r.tvl) + '</td><td class=\'r wide\'>' + (r.change7d == null ? 'n/a' : pct(r.change7d)) + '<small class=\'' + (r.excess >= 0 ? 'up' : 'down') + '\'>' + pct(r.excess * 100) + ' vs market</small></td>' +
         '<td class=\'r wide\'>' + span(r.age) + '</td>' +
         '<td class=\'r\'><b>' + usd(r.value) + '</b><span class=\'band wide\'><i style=\'left:' + bar(r.low) + '%;width:' + (bar(r.high) - bar(r.low)) + '%\'></i><u style=\'left:' + bar(r.value) + '%\'></u></span></td>' +
@@ -158,22 +159,23 @@
   function renderDetailView(r) {
     var p = r.now;
     return '<article class=\'detail\'><p class=\'crumbs\'><button data-set=\'p=\'>← Board</button>' +
-      '<span>Rank ' + r.rank + ' of ' + rows.length + ' · ' + esc(r.category) + ' · ' + esc(r.chains.slice(0, 3).join(', ')) + (r.chains.length > 3 ? ' +' + (r.chains.length - 3) : '') + ' · ← → for the next rank</span></p>' +
+      '<span>Rank ' + r.rank + ' of ' + rows.length + ' · ' + esc(r.category) + ' · ' + esc(r.chains.slice(0, 3).join(', ')) + (r.chains.length > 3 ? ' +' + (r.chains.length - 3) : '') + '</span></p>' +
       '<header><h1>' + esc(r.name) + ' ' + tag('tier', r.tier) + '<small>TVL ' + usd(r.tvl) + ' · ' + (r.age == null ? 'no listing date' : r.age + ' days on record') + ' · DefiLlama records no token as of ' + radar.asOf + '</small></h1>' +
-      '<div class=\'worth\'><b>' + usd(r.value) + '</b><small>implied value · likely ' + usd(r.low) + ' to ' + usd(r.high) + '</small></div></header>' +
+      '<div class=\'worth\'><b>' + usd(r.value) + '</b><small>implied value · ' + usd(r.low) + ' to ' + usd(r.high) + ', ' + times(r.spread) + ' either way</small></div></header>' +
       '<div class=\'cols\'><section>' + renderValueBuild(r) + wide(curveChart(430, 190, r)) + '</section>' +
-      '<section>' + renderFarmPlanTable(r, p) + renderNetGrid(r) + '</section></div></article>';
+      '<section>' + renderFarmPlanTable(r, p) + '</section></div></article>';
   }
   /** impliedValue's factors as a running product, each with the snapshot figure behind it. */
   function renderValueBuild(r) {
-    var comps = radar.comps.filter(function (c) { return c.sector === r.sector; }).length, running = r.curve;
+    var comps = radar.comps.filter(function (c) { return c.sector === r.sector; }).length, running = r.curve, months = Math.round(R.CONFIG.youngDays / 30);
     var why = [r.sector + ': ' + comps + ' traded comps, effect shrunk toward the curve',
       (r.change7d == null ? 'no 7-day figure' : '7d ' + pct(r.change7d)) + ' against the market\'s ' + pct(radar.marketWeek),
-      r.age == null ? 'no listing date on record' : r.age + ' days with no token; younger tokens trade richer',
+      r.age == null ? 'no listing date on record' : r.age + ' days with no token: a slight tilt, newer tokens trade richer',
       r.tier === 'shared' ? 'filed under a parent: one launch shared with siblings' : r.kin ? 'its name stem already carries ' + r.kin + ': kept only because the watchlist names it' : 'its own launch'];
     return '<h2>How ' + usd(r.value) + ' is built ' + fn('impliedValue') + '</h2><table class=\'build\'><tr><td>Size curve</td><td></td><td>' + usd(r.curve) + '</td><td>10^' + fit.a.toFixed(2) + ' × ' + usd(r.tvl) + '^' + fit.b.toFixed(3) + ', fitted on ' + radar.comps.length + ' traded tokens</td></tr>' +
       r.factors.map(function (f, i) { running *= f[1]; return '<tr><td>' + f[0] + '</td><td>' + times(f[1]) + '</td><td>' + usd(running) + '</td><td>' + esc(why[i]) + '</td></tr>'; }).join('') +
-      '<tr class=\'on\'><td>Implied value</td><td></td><td>' + usd(r.value) + '</td><td>recomputed here; board.json has $' + r.value.toLocaleString('en-US') + ' at rank ' + r.rank + '</td></tr></table>';
+      '<tr class=\'on\'><td>Implied value</td><td></td><td>' + usd(r.value) + '</td><td>recomputed here; board.json has $' + r.value.toLocaleString('en-US') + ' at rank ' + r.rank + '</td></tr>' +
+      '<tr><td>Range</td><td>' + times(r.spread) + '</td><td>' + usd(r.low) + ' – ' + usd(r.high) + '</td><td>half the blind misses of tokens ' + (r.young ? 'under ' : 'over ') + months + ' months on record fall inside: the younger, the less sure</td></tr></table>';
   }
   /** farmPlan's eight steps with each one's dollar cost and minutes, then slice - fees - T-bill = net. */
   function renderFarmPlanTable(r, p) {
@@ -184,13 +186,6 @@
       '<p class=\'sum\'>Slice <b>' + usd(p.slice) + '</b> − fees <b>' + usd(p.fees) + '</b> − T-bill forgone <b>' + usd(p.forgone) + '</b> = net <b class=\'' + (p.net >= 0 ? 'up' : 'down') + '\'>' + signed(p.net) + '</b>, ' + signed(p.perHour) + ' an hour. ' +
       (p.breakEven ? 'Pays from a ' + usd(p.breakEven) + ' ticket.' : 'No ticket size pays at this value.') + '</p>' +
       '<p class=\'note\'>Slice: ' + Math.round(p.share * 100) + '% of ' + usd(r.value) + ' shared by dollar-days. Your ' + p.hold + ' days stand behind ' + Math.round(p.ahead) + ' day-equivalents already earned (half its days with no token, as if TVL grew in a straight line). A launch that only counts balances on the day would pay ' + usd(p.snapshotSlice) + '.</p>';
-  }
-  /** Net at three tickets and three airdrop shares: how far the verdict depends on the assumptions. */
-  function renderNetGrid(r) {
-    var shares = [5, 10, 20];
-    return '<table class=\'mini grid\'><tr><th>Net of all costs at</th>' + shares.map(function (s) { return '<th>' + s + '% airdrop</th>'; }).join('') + '</tr>' + [1000, 5000, 25000].map(function (cap) {
-      return '<tr><td>' + usd(cap) + ' ticket</td>' + shares.map(function (s) { var p = R.farmPlan(r, { capital: cap, share: s / 100 }); return '<td class=\'' + (p.net >= 0 ? 'up' : 'down') + '\'>' + signed(p.net) + '</td>'; }).join('') + '</tr>';
-    }).join('') + '</table>';
   }
 
   // ---------------------------------------------------------------- the other tabs
@@ -206,22 +201,22 @@
   }
   /** Protocols with no token on record that the board leaves out, each with the rule that set it aside. */
   function renderSetAside() {
-    return '<p class=\'lead\'>' + radar.counts.noToken + ' protocols record no token. ' + rows.length + ' are ranked; these ' + radar.aside.length + ' are set aside by rule, never by name: the house\'s watchlist rule (bridge, staking, exchange, versioned or wrapped listings) or a name stem that already carries a token.</p>' +
+    return '<p class=\'lead\'>' + radar.counts.noToken + ' protocols record no token. ' + rows.length + ' are ranked; these ' + radar.aside.length + ' are set aside by rule: the house\'s watchlist rule (bridge, staking, exchange, versioned or wrapped listings) or a name stem that already carries a token.</p>' +
       '<table class=\'board\'><thead><tr><th>Protocol</th><th>Category</th><th class=\'r\'>TVL</th><th>Set aside because</th></tr></thead><tbody>' +
       radar.aside.map(function (a) { return '<tr><td><b>' + esc(a.name) + '</b></td><td>' + esc(a.category || '') + '</td><td class=\'r\'>' + usd(a.tvl) + '</td><td>' + esc(a.reason) + '</td></tr>'; }).join('') + '</tbody></table>';
   }
   /** The method in words, the evidence for each input, and every traded token's blind price against its cap. */
   function renderMethodAndTests() {
     var C = R.CONFIG, sectors = Object.keys(fit.sector).map(function (s) { return s + ' ' + times(Math.pow(10, fit.sector[s])); }).join(', ');
-    return '<div class=\'method\'><section><h2>What is priced</h2><p>A protocol is on the board when DefiLlama records no market cap, ticker or CoinGecko id for it and no rule sets it aside. Its implied value is what its token would be worth if priced like the tokens that already trade.</p>' +
+    return '<div class=\'method\'><section><h2>What is priced</h2><p>A protocol is on the board when DefiLlama records no market cap, ticker or CoinGecko id for it and no rule sets it aside. Its value is what its token would be worth if priced like those that trade.</p>' +
       '<h2>The evidence for each input</h2><table class=\'mini text\'><tr><th>Input</th><th>What the ' + radar.comps.length + ' comparables say</th><th>How it is used</th></tr>' +
       '<tr><td>TVL</td><td>cap grows as TVL^' + fit.b.toFixed(3) + ': a dollar of TVL is worth less in a big protocol</td><td>the size curve, a Theil-Sen line no outlier can tilt</td></tr>' +
       '<tr><td>Sector</td><td>' + sectors + '</td><td>each effect shrunk by ' + C.pseudoComps + ' pseudo-comps</td></tr>' +
       '<tr><td>7-day growth</td><td>the median protocol moved ' + pct(radar.marketWeek) + ' that week</td><td>TVL carried forward by its growth over the market, capped at ±' + C.growthCap * 100 + '%</td></tr>' +
-      '<tr><td>Time with no token</td><td>younger tokens trade richer: ' + fit.ageSlope.toFixed(2) + ' per tenfold of days, after halving</td><td>held within ' + times(C.ageClamp[0]) + ' to ' + times(C.ageClamp[1]) + '; and in the farm slice</td></tr>' +
+      '<tr><td>Time with no token</td><td>newer tokens price richer in every cohort split; under ' + Math.round(C.youngDays / 30) + ' months on record the blind test misses ' + times(tests.spread.young.miss) + ', older ' + times(tests.spread.seasoned.miss) + '</td><td>a slight tilt on price (' + times(C.ageClamp[0]) + ' to ' + times(C.ageClamp[1]) + '), the width of the range, and the farm slice</td></tr>' +
       '<tr><td>Honest limit</td><td>the blind test is no better with growth and age (' + times(tests.ladder[2].miss) + ' to ' + times(tests.ladder[3].miss) + ')</td><td>both are kept small; size and sector carry the value</td></tr></table>' +
       '<h2>Farm maths</h2><p>slice = value × airdrop share × ticket / TVL × hold / (ahead + hold). ahead is half the days it has run with no token, at most ' + C.pointsWindow + ': TVL is taken to have grown in a straight line. net = slice − fees − the ' + C.tbill * 100 + '% T-bill yield given up. FARM beats both; THIN beats fees only, so it needs the position\'s own yield; SKIP beats neither.</p>' +
-      '<h2>Limits</h2><p>One day of DefiLlama data. Nothing here says whether or when a token launches.</p></section>' +
+      '</section>' +
       '<section><h2>Blind test: every traded token priced as if it had none</h2>' + scatterChart({ w: 430, h: 260, x: [5, 9.5], y: [4.5, 10], dots: radar.comps.map(function (c) { return [c.blind, c.mcap, 'comp', 2.5]; }),
         lines: [[1e5, 1e5, 3e9, 3e9, 'fit'], [1e5, 3e5, 1e9, 3e9, 'edge'], [3e5, 1e5, 3e9, 1e9, 'edge']], label: 'Across: the blind price. Up: the real market cap. Between the dashed lines: within 3×.' }) + '</section></div>';
   }
@@ -256,11 +251,7 @@
     state[k] = e.target.value; writeStateToHash();
     if (k === 'q') renderBoardTable(); else render();
   });
-  document.addEventListener('keydown', function (e) {
-    var row = state.p && rows.filter(function (r) { return r.slug === state.p; })[0], to = row && rows[row.rank - 1 + (e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0)];
-    if (e.key === 'Escape' && row) setState('p', '');
-    else if (to && to !== row) setState('p', to.slug);
-  });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && state.p) setState('p', ''); });
   window.addEventListener('hashchange', function () { readStateFromHash(); render(); });
   readStateFromHash(); renderHeader(); render();
 })();
