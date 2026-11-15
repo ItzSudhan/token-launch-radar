@@ -4,9 +4,9 @@
 [![rank](https://make.fun/badge/token-radar-01/ItzSudhan/token-launch-radar/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/ItzSudhan/token-launch-radar/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-A token launch radar: it reads a sealed DefiLlama snapshot, ranks every protocol with no token on record by the implied value of the token it may launch, and writes an offline dashboard with a board, a detail view and filters, plus a farm plan with costs and times for every protocol.
+A token launch radar: it reads a sealed DefiLlama snapshot, ranks every protocol that records no token by the implied value of the token it may launch, and writes an offline dashboard with a sortable, filterable board, a detail view per protocol and a costed farm plan for each.
 
-The value model prices each pre-token protocol like the market already prices its category: implied FDV = TVL x the median market-cap/TVL of traded peers in the same category (shrunk toward the all-peer median), adjusted for 7-day TVL momentum, how long it has run with no token, chain breadth, and a discount for protocols DefiLlama links to a parent. No protocol name is special-cased. Implied values are the model's own estimate, not a prediction of a launch and not financial advice.
+One model file, `dashboard/1-model.js`, prices both `board.json` and the page, so the two cannot disagree: the page recomputes every row from the snapshot and checks it against the board. A launch is valued on the market's own size curve, fitted on the snapshot's traded tokens and tested by pricing each of them blind, then adjusted for sector, 7-day growth against the market and days with no token. Each farm plan is eight steps with a dollar cost and minutes apiece, netted against fees and the T-bill yield given up. No protocol name is special-cased. Implied values are the model's own estimate, not a forecast of a launch and not financial advice.
 
 ## Run it
 
@@ -17,4 +17,4 @@ mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input path/to/snapshot.jso
 
 ---
 
-<sub>Entered on [make.fun](https://make.fun/?ref=hax102zf&utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
+<sub>Entered on [make.fun](https://make.fun/?ref=1pww8frk&utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
