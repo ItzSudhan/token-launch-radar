@@ -1,4 +1,4 @@
-/* Token Radar: ink on paper, one cobalt accent; green, amber and red only for verdicts. One component a line. */
+/* Token Radar: ink on paper, one cobalt accent; green, amber and red for verdicts only. */
 :root {
   --paper: #f1f3f6; --card: #fff; --ink: #0d1520; --dim: #546072; --line: #cfd6e0; --soft: #e6eaf0; --brand: #1d4ed8; --brand-soft: #e1e9fd;
   --farm: #08693f; --farm-bg: #d5f0e1; --thin: #7d5200; --thin-bg: #fbecc2; --skip: #a12d25; --skip-bg: #fadfdb;

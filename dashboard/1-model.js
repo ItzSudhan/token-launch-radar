@@ -270,7 +270,7 @@ var CHAIN_COST = {
   Solana: [0.005, 1], Sui: [0.005, 0.5], Aptos: [0.005, 0.5], Stellar: [0.001, 0.2], Algorand: [0.001, 0.2],
   Base: [0.03, 0.5], Arbitrum: [0.03, 0.5], Optimism: [0.03, 0.5], Ink: [0.03, 1], Monad: [0.01, 1], 'Hyperliquid L1': [0.01, 1]
 };
-function chainCost(chain) { return CHAIN_COST[chain] || [0.05, 1.5]; }   // the default for any other chain
+function chainCost(chain) { return CHAIN_COST[chain] || [0.05, 1.5]; }   // any other chain
 /** A protocol's first three chains hold most of its TVL; the plan runs on the cheapest of them. */
 function farmChain(chains) {
   return chains.slice(0, 3).sort(function (a, b) { return chainCost(a)[0] - chainCost(b)[0] || chains.indexOf(a) - chains.indexOf(b); })[0] || 'its main chain';

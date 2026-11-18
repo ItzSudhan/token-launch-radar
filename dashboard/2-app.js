@@ -1,4 +1,4 @@
-/* Token Radar, the page. It prices nothing: Radar.buildRadar (1-model.js) recomputes the board from ../data.js and Radar.checkBoard compares it with board.json. */
+/* Token Radar, the page. It prices nothing: Radar.buildRadar (1-model.js) recomputes the board from ../data.js; Radar.checkBoard matches it to board.json. */
 (function () {
 'use strict';
 // view state lives in the URL hash, so every filter, sort and protocol is a link
@@ -58,7 +58,7 @@ var esc = function (s) { return String(s).replace(/[&<>'"]/g, function (c) { ret
   span = function (d) { return d == null ? 'undated' : d < 365 ? d + ' d' : (d / 365).toFixed(1) + ' y'; },
   tag = function (kind, v) { return '<i class=\'' + kind + ' ' + v + '\'>' + v + '</i>'; },
   wide = function (s) { return '<span class=\'wide\'>' + s + '</span>'; },
-  fn = function (name) { return '<span class=\'fn\'>' + name + '()</span>'; },   // the model function a panel shows
+  fn = function (name) { return '<span class=\'fn\'>' + name + '()</span>'; },   // the function behind a panel
   meter = function (p) { return '<span class=\'odds\'><i style=\'width:' + per(p) + '\'></i></span>'; },
   table = function (cls, head, body) { return '<table class=\'' + cls + '\'><tr><th>' + head.join('</th><th>') + '</th></tr>' + body.map(function (c) { return '<tr><td>' + c.join('</td><td>') + '</td></tr>'; }).join('') + '</table>'; },
   select = function (key, pairs) {
@@ -110,7 +110,8 @@ function renderOutOfSample() {
     tests.ladder.map(function (l, i) { return row(l.name, [times(l.miss) + ' <small>' + per(l.within3) + '</small>', times(l.split.miss) + ' <small>' + per(l.split.within3) + '</small>'], i === 3); }).join('') +
     '<tr><th>Launch odds: called right · log loss</th><th>each left out</th><th>newest third</th></tr>' +
     odds.steps.map(function (s) { return row(s.name + (s.kept ? '' : ' <small>dropped</small>'), [of(s.each.right, s.each.n) + ' <small>' + s.each.loss.toFixed(3) + '</small>', of(s.split.right, s.split.n)], s === odds.kept); }).join('') +
-    '</table><p class=\'cap\'>Value: ' + tests.older + ' tokens 900+ days on record price the ' + tests.newer + ' newer. Odds: listed before ' + odds.kept.cut + ' predict the rest. A step stays only if it lowers held-out log loss.</p></div>';
+    '</table><p class=\'cap\'>Value: ' + tests.older + ' tokens 900+ days on record price the ' + tests.newer + ' newer' + (tests.ladder[3].split.miss < tests.ladder[2].split.miss ? '; growth and age stay as they cut that miss' : '') +
+    '. Odds: listed before ' + odds.kept.cut + ' predict the rest; a step stays only if it lowers held-out log loss.</p></div>';
 }
 /** Ranges and odds, each against how often the held-out data agreed with it. */
 function renderCalibration() {
@@ -119,7 +120,7 @@ function renderCalibration() {
     R.CONFIG.bands.map(function (b, i) { return '<tr><td>' + per(b) + ' range: ' + f('seasoned', i) + ', ' + f('young', i) + ' if young</td><td>' + per(b) + '</td><td>' + of(rng.each[i], rng.n) + '</td><td>' + of(rng.split[i], rng.newer) + '</td></tr>'; }).join('') +
     '<tr><th>Launch odds, held out</th><th>protocols</th><th>said</th><th>recorded a token</th></tr>' +
     odds.calib.map(function (b) { return '<tr><td>' + per(b.lo) + ' to ' + per(b.lo + 0.2) + '</td><td>' + b.n + '</td><td>' + per(b.said) + '</td><td>' + per(b.saw) + ' ' + meter(b.saw) + '</td></tr>'; }).join('') +
-    '</table><p class=\'cap\'>Young: under ' + Math.round(R.CONFIG.youngDays / 30) + ' months on record (' + rng.young + ' tokens), whose blind prices miss wider. Base rate: ' + per(odds.base) + ' of ' + odds.n + ' candidates record a token.</p></div>';
+    '</table><p class=\'cap\'>Young: under ' + Math.round(R.CONFIG.youngDays / 30) + ' months on record (' + rng.young + ' tokens). Base rate: ' + per(odds.base) + ' of ' + odds.n + ' record a token.</p></div>';
 }
 function renderTabs() {
   var tabs = [['board', 'No token yet', rows.length], ['apart', 'Kept apart', radar.tokens.length + radar.aside.length]];
