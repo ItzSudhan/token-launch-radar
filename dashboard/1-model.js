@@ -440,7 +440,7 @@ function usd(x) {
   if (a >= 1e9) return sign + '$' + (a / 1e9).toFixed(2) + 'B';
   if (a >= 1e6) return sign + '$' + (a / 1e6).toFixed(a >= 1e8 ? 0 : 1) + 'M';
   if (a >= 1e3) return sign + '$' + Math.round(a).toString().replace(/\B(?=(\d{3})+$)/g, ',');
-  if (a > 0 && a < 0.01) return 'under $0.01';
+  if (a > 0 && a < 0.01) return sign + '<$0.01';
   return sign + '$' + a.toFixed(a >= 100 ? 0 : 2);
 }
 /** FNV-1a, so the page can prove its plan text is the text board.json carries. */
