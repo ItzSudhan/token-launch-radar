@@ -5,7 +5,7 @@
 'use strict';
 
 var CONFIG = {
-  version: 'comps-curve-odds-4',
+  version: 'comps-curve-3',
   pseudoComps: 4,       // zero-effect comps that pull each sector's effect toward the curve
   receiptBand: 0.015,   // cap within 1.5% of TVL: the 'token' is the deposit receipt, not a launch
   growthCap: 0.4,       // excess 7-day growth carried forward, capped at +-40%
@@ -13,12 +13,10 @@ var CONFIG = {
   ageClamp: [0.9, 1.15], // the blind test gains little from it, so the tilt is kept slight
   youngDays: 540,       // under 18 months on record blind prices miss far wider: a wider range
   kinToken: 0.25,       // a watchlist row whose name stem already carries a token on record
-  ridge: 1,             // launch odds: L2 pull of every coefficient toward 0 (not the intercept)
-  bands: [0.5, 0.8],    // the two ranges printed: half and four in five of held-out tokens inside
   capital: 1000, airdropShare: 0.10, tbill: 0.04, pointsWindow: 365
 };
 
-/* ---- 1. VALUE IF IT LAUNCHES, with the protocol's record as it stands:
+/* ---- 1. VALUE. What a launch would be worth if the protocol's record stayed as it is:
  *   value = 10^a x TVL^b  x sector  x (1 + excess growth)^b  x age factor  x kinship
  * a, b, the sector effects and the age slope are all fitted on the snapshot's own traded tokens. */
 function impliedValue(p, fit, ctx) {
@@ -73,7 +71,7 @@ function buildComps(snapshot, marketWeek) {
       if (q.symbol === p.symbol && (t === s || (Math.min(t.length, s.length) > 3 && (t.indexOf(s) === 0 || s.indexOf(t) === 0)))) { tvl += q.tvl_usd; members++; }
     });
     return {
-      slug: p.slug, name: p.name, symbol: p.symbol || p.gecko_id, sector: sectorOf(p.category),
+      name: p.name, symbol: p.symbol || p.gecko_id, sector: sectorOf(p.category),
       tvl: tvl, mcap: p.mcap_usd, members: members, age: ageDays(snapshot.as_of, p.listed_at), excess: excessGrowth(p.change_7d, marketWeek),
       x: log10(tvl), y: log10(p.mcap_usd),
       skip: HOUSE_CATEGORIES.indexOf(p.category) >= 0 ? 'prices a chain, exchange or staked asset'
@@ -104,118 +102,22 @@ function backtest(comps) {
   return { ladder: ladder, older: older.length, newer: newer.length };
 }
 
-/* ---- 2. LAUNCH ODDS, learnt from the snapshot's own record: every launch candidate (one per token family,
- * none the house rule sets aside) is 1 if it records a token, else 0, and a ridge logistic fit reads it.
- * Figures are read today, not on launch day: odds say how much a row looks like protocols that launched. */
-var ODDS_STEPS = [
-  ['Base rate alone', []],
-  ['+ time on record', ['age', 'undated']],
-  ['+ TVL', ['size']],
-  ['+ sector', ['Vaults', 'Dollars', 'RWA', 'Lending', 'Trading']],
-  ['+ 7-day growth, chains', ['momentum', 'reach']]
-];
-function oddsX(c, names) {
-  var f = { age: c.age == null ? 0 : log10(Math.max(c.age, 30)) - 2.7, undated: c.age == null ? 1 : 0,
-    size: log10(c.tvl) - 8, momentum: c.excess, reach: log10(c.chains) };
-  return [1].concat(names.map(function (n) { return n in f ? f[n] : c.sector === n ? 1 : 0; }));
-}
-/** Ridge logistic regression by Newton steps; `w` warm-starts a refit (two steps then suffice). */
-function fitLogit(X, y, w, steps) {
-  var k = X[0].length, s, i, a, b;
-  w = w ? w.slice() : X[0].map(function () { return 0; });
-  for (s = 0; s < steps; s++) {
-    var g = w.map(function (v, a) { return a ? -CONFIG.ridge * v : 0; });
-    var H = w.map(function (_, a) { return w.map(function (_, b) { return a === b && a ? CONFIG.ridge : 0; }); });
-    for (i = 0; i < X.length; i++) {
-      var x = X[i], p = sigmoid(dot(w, x)), q = p * (1 - p);
-      for (a = 0; a < k; a++) { g[a] += (y[i] - p) * x[a]; for (b = 0; b <= a; b++) H[a][b] += q * x[a] * x[b]; }
-    }
-    for (a = 0; a < k; a++) for (b = a + 1; b < k; b++) H[a][b] = H[b][a];
-    w = solve(H, g).map(function (d, a) { return w[a] + d; });
-  }
-  return w;
-}
-/** One odds step, tested each left out and newest third by listing date (fit on the older and undated). */
-function oddsStep(cands, level) {
-  var names = [].concat.apply([], ODDS_STEPS.slice(1, level + 1).map(function (s) { return s[1]; }));
-  var X = cands.map(function (c) { return oddsX(c, names); }), y = cands.map(function (c) { return c.y; });
-  var full = fitLogit(X, y, null, 8);
-  var loo = cands.map(function (_, i) {
-    var keep = function (_, j) { return j !== i; };
-    return sigmoid(dot(fitLogit(X.filter(keep), y.filter(keep), full, 2), X[i]));
-  });
-  var dated = cands.filter(function (c) { return c.listed; }).map(function (c) { return c.listed; }).sort(), cut = dated[Math.floor(dated.length * 2 / 3)];
-  var isNew = cands.map(function (c) { return !!c.listed && c.listed >= cut; }), old = function (_, i) { return !isNew[i]; };
-  var w = fitLogit(X.filter(old), y.filter(old), null, 8), split = [];
-  cands.forEach(function (c, i) { if (isNew[i]) split.push([sigmoid(dot(w, X[i])), c.y]); });
-  return { name: ODDS_STEPS[level][0], level: level, w: full, names: names, loo: loo, cut: cut,
-    each: score(loo.map(function (p, i) { return [p, y[i]]; })), split: score(split) };
-}
-function score(pairs) {
-  var right = pairs.filter(function (p) { return (p[0] >= 0.5) === (p[1] === 1); }).length;
-  var loss = pairs.reduce(function (s, p) { return s - Math.log(Math.max(1e-9, p[1] ? p[0] : 1 - p[0])); }, 0) / pairs.length;
-  return { right: right, n: pairs.length, acc: right / pairs.length, loss: loss };
-}
-/** Launch candidates: every token family the house rule keeps (its TVL summed, its oldest listing), and every board row. */
-function launchCandidates(snapshot, rows, marketWeek) {
-  var fam = {};
-  snapshot.protocols.forEach(function (p) {
-    if (tokenStatus(p) === 'none' || houseRule(p)) return;
-    var k = p.gecko_id || p.symbol, f = fam[k], age = ageDays(snapshot.as_of, p.listed_at);
-    if (!f) f = fam[k] = { y: 1, tvl: 0, age: age, listed: p.listed_at, top: 0, on: {} };
-    f.tvl += p.tvl_usd; p.chains.forEach(function (ch) { f.on[ch] = 1; });
-    if (age != null && (f.age == null || age > f.age)) { f.age = age; f.listed = p.listed_at; }
-    if (p.tvl_usd > f.top) { f.top = p.tvl_usd; f.sector = sectorOf(p.category); f.excess = excessGrowth(p.change_7d, marketWeek); }
-  });
-  return Object.keys(fam).sort().map(function (k) { var f = fam[k]; f.chains = Math.max(1, Object.keys(f.on).length); return f; }).concat(rows.map(function (r) {
-    return { y: 0, tvl: r.tvl, age: r.age, listed: r.listed, sector: r.sector, excess: r.excess, chains: Math.max(1, r.chains.length), row: r };
-  }));
-}
-/** Every step tested; a step is kept only if it lowers the held-out log loss of the last one kept, so each
- *  feature earns its place. Each board row's odds is its own each-left-out prediction: a fit that never saw it. */
-function launchOdds(cands) {
-  var steps = ODDS_STEPS.map(function (_, level) { return oddsStep(cands, level); }), kept = steps[0];
-  steps.forEach(function (s) { s.kept = s.level === 0 || s.each.loss < kept.each.loss; if (s.kept) kept = s; });
-  cands.forEach(function (c, i) { if (c.row) c.row.odds = kept.loo[i]; });
-  var base = cands.filter(function (c) { return c.y; }).length / cands.length;
-  return { steps: steps, kept: kept, n: cands.length, tokens: Math.round(base * cands.length), base: base,
-    baseAcc: Math.max(base, 1 - base), calib: calibrate(kept.loo.map(function (p, i) { return [p, cands[i].y]; })) };
-}
-/** Held-out odds in five bins against how often those protocols really record a token. */
-function calibrate(pairs) {
-  return [0, 0.2, 0.4, 0.6, 0.8].map(function (lo) {
-    var bin = pairs.filter(function (p) { return p[0] >= lo && (p[0] < lo + 0.2 || lo === 0.8); });
-    return { lo: lo, n: bin.length, said: bin.length ? mean(bin.map(function (p) { return p[0]; })) : 0, saw: bin.length ? mean(bin.map(function (p) { return p[1]; })) : 0 };
-  });
-}
-
-/* ---- 3. RANGES. Each band is the conformal quantile of the blind misses of tokens like it (under or over
- * 18 months on record), then tested on tokens it never saw: each left out, and older-to-newer. */
-function bandWidth(misses, level) {
-  var s = misses.slice().sort(function (a, b) { return a - b; });
-  return s.length ? s[Math.min(s.length - 1, Math.ceil((s.length + 1) * level) - 1)] : 0;   // log10 of the factor
-}
+/** The range: half the blind misses of tokens like it (under or over 18 months on record) fall inside it.
+ *  Tested on tokens it never saw: each left out (its own miss against the others'), and older-to-newer. */
 function rangeTest(comps) {
   var miss = function (c) { return Math.abs(c.y - log10(c.blind)); }, young = function (c) { return c.age != null && c.age < CONFIG.youngDays; };
   var groups = { young: comps.filter(young), seasoned: comps.filter(function (c) { return !young(c); }) };
-  var width = {}, each = CONFIG.bands.map(function (level) {
-    for (var g in groups) (width[g] = width[g] || []).push(bandWidth(groups[g].map(miss), level));
-    return comps.filter(function (c) {
-      var g = young(c) ? 'young' : 'seasoned', others = groups[g].filter(function (o) { return o !== c; }).map(miss);
-      return miss(c) <= bandWidth(others, level);
-    }).length;
-  });
-  // older-to-newer: fit, blind misses and band widths all from the older tokens; then the newer priced
+  var each = comps.filter(function (c) {
+    return miss(c) <= median(groups[young(c) ? 'young' : 'seasoned'].filter(function (o) { return o !== c; }).map(miss));
+  }).length;
+  // older-to-newer: fit, blind misses and the range all from the older tokens; then the newer priced
   var older = comps.filter(isOlder), newer = comps.filter(function (c) { return !isOlder(c); }), f = fitCurve(older, 3);
-  var olderMiss = older.map(function (c, i) { return Math.abs(c.y - predictLog(fitCurve(older.filter(function (_, j) { return j !== i; }), 3), c)); });
-  var split = CONFIG.bands.map(function (level) {
-    var w = bandWidth(olderMiss, level);
-    return newer.filter(function (c) { return Math.abs(c.y - predictLog(f, c)) <= w; }).length;
-  });
-  return { width: width, each: each, n: comps.length, split: split, newer: newer.length, young: groups.young.length };
+  var w = median(older.map(function (c, i) { return Math.abs(c.y - predictLog(fitCurve(older.filter(function (_, j) { return j !== i; }), 3), c)); }));
+  return { young: Math.pow(10, median(groups.young.map(miss))), seasoned: Math.pow(10, median(groups.seasoned.map(miss))), nYoung: groups.young.length,
+    each: each, n: comps.length, split: newer.filter(function (c) { return Math.abs(c.y - predictLog(f, c)) <= w; }).length, newer: newer.length };
 }
 
-/* ---- 4. FARM PLANS. Ten plays by mechanism. tx: transactions to [enter, qualify, each week, exit].
+/* ---- 2. FARM PLANS. Ten plays by mechanism. tx: transactions to [enter, qualify, each week, exit].
  * pct: fees as a share of the ticket [once, each week]. carry: yearly interest as a share of the ticket.
  * min: minutes to [enter, qualify, each week]. {C} is the ticket, {C/4} a quarter of it. */
 var PLAYS = {
@@ -277,7 +179,7 @@ function farmChain(chains) {
 }
 
 /** One row's farm plan: eight steps, each [verb, what to do, dollars, minutes], then the sums.
- *  slice = value x odds x airdrop share x this ticket's dollar-days / everyone's; deposits already in count
+ *  slice = implied value x airdrop share x this ticket's dollar-days / everyone's; deposits already in count
  *  half its days with no token (TVL grown in a straight line, a year at most).
  *  net = slice - fees - the T-bill yield the ticket gives up. FARM: net > 0. THIN: covers fees only. */
 function farmPlan(row, opts) {
@@ -289,7 +191,7 @@ function farmPlan(row, opts) {
     return t.replace(/\{C(\/\d+)?\}/g, function (_, d) { return usd(d ? C / +d.slice(1) : C); }).replace(/\{N\}/g, N).replace(/\{chain\}/g, chain);
   };
   var ahead = Math.min(row.age == null ? CONFIG.pointsWindow : row.age, CONFIG.pointsWindow) / 2;
-  var slice = row.expected * share * C / (row.tvl + C) * H / (ahead + H);
+  var snapshotSlice = row.value * share * C / (row.tvl + C), slice = snapshotSlice * H / (ahead + H);
   var gasBudget = Math.max(1, Math.ceil(2 * gas * (play.tx[0] + play.tx[1] + weeks * play.tx[2] + play.tx[3] + 2)));   // twice the plan's gas
   var steps = [
     ['Fund', 'Withdraw ' + usd(C) + ' (USDC, or the asset it takes) and ' + usd(gasBudget) + ' for gas from an exchange to a fresh wallet on ' + chain + ', used for this farm only.', fund, 10],
@@ -298,7 +200,7 @@ function farmPlan(row, opts) {
     ['Qualify', text(play.qualify), play.tx[1] * gas + play.carry * C * H / 365, play.min[1]],
     ['Upkeep', 'Each week for ' + weeks + ' weeks, ' + play.watch + '; log it.', weeks * (play.tx[2] * gas + play.pct[1] * C), weeks * play.min[2]],
     ['Stop rule', 'Leave early if ' + play.stop + ', TVL drops under ' + usd(row.tvl * 0.7) + ' (-30%), or a token is announced with nothing for depositors.', 0, 5],
-    ['Claim', 'If a token launches (' + Math.round(row.odds * 100) + '% odds), claim only from ' + N + '\'s own site, never pay to claim, then revoke approvals. At ' + usd(row.value) + ' if it launches this ticket\'s slice is ' + usd(slice / row.odds) + ', ' + usd(slice) + ' after the odds.', gas, 10],
+    ['Claim', 'If a token launches, claim only from ' + N + '\'s own site, never pay to claim, then revoke approvals. At the implied ' + usd(row.value) + ' this ticket\'s slice is about ' + usd(slice) + '.', gas, 10],
     ['Exit', 'After ' + H + ' days or at the claim, unwind the position and send the funds back to the exchange.', (play.tx[3] + 1) * gas, 10]
   ];
   if (play.qualifyFirst) steps.splice(2, 2, steps[3], steps[2]);
@@ -308,7 +210,7 @@ function farmPlan(row, opts) {
   var scaling = C * (play.pct[0] + weeks * play.pct[1] + play.carry * H / 365), perDollar = (slice - scaling - forgone) / C;
   return {
     play: playOf(row.category), label: play.label, chain: chain, hold: H, weeks: weeks, capital: C, share: share, ahead: ahead,
-    steps: steps, fees: fees, minutes: minutes, forgone: forgone, slice: slice, net: net,
+    steps: steps, fees: fees, minutes: minutes, forgone: forgone, slice: slice, snapshotSlice: snapshotSlice, net: net,
     perHour: net / (minutes / 60), verdict: net > 0 ? 'FARM' : slice > fees ? 'THIN' : 'SKIP',
     breakEven: perDollar > 0 ? (fees - scaling) / perDollar : null
   };
@@ -320,7 +222,7 @@ function stepStrings(plan) {
   });
 }
 
-/* ---- 5. THE WHOLE RADAR: who has a token, who is set aside and why, then rank the rest by expected value. */
+/* ---- 3. THE WHOLE RADAR: who has a token, who is set aside and why, then rank the rest by value. */
 function buildRadar(snapshot) {
   var protocols = snapshot.protocols, watch = {}, tokenStems = {};
   snapshot.watchlist.forEach(function (s) { watch[s] = true; });
@@ -336,23 +238,19 @@ function buildRadar(snapshot) {
     if (reason) { aside.push({ name: p.name, category: p.category, tvl: p.tvl_usd, reason: reason, kin: kinSymbol }); return; }
     // above the floor and clear of every rule, yet off the watchlist: DefiLlama files it under a parent
     ctx.kin = kinSymbol ? 'token' : !listed && p.tvl_usd >= snapshot.floor_usd ? 'parent' : null;
-    var v = impliedValue(p, fit, ctx), young = v.age != null && v.age < CONFIG.youngDays && ranges.young > 0;
-    var w = ranges.width[young ? 'young' : 'seasoned'], s50 = Math.pow(10, w[0]), s80 = Math.pow(10, w[1]);
+    var v = impliedValue(p, fit, ctx), young = v.age != null && v.age < CONFIG.youngDays && ranges.nYoung > 0;
+    var spread = young ? ranges.young : ranges.seasoned;
     rows.push({
       slug: p.slug, name: p.name, category: p.category || 'Uncategorised', sector: v.sector, chains: p.chains, tvl: p.tvl_usd,
-      change7d: p.change_7d, excess: v.excess, age: v.age, listed: p.listed_at, tier: listed ? 'watchlist' : ctx.kin === 'parent' ? 'shared' : 'early',
-      kin: kinSymbol || null, value: v.value, curve: v.curve, factors: v.factors, young: young, spread: s50, spread80: s80,
-      low: v.value / s50, high: v.value * s50, low80: v.value / s80, high80: v.value * s80
+      change7d: p.change_7d, excess: v.excess, age: v.age, tier: listed ? 'watchlist' : ctx.kin === 'parent' ? 'shared' : 'early',
+      kin: kinSymbol || null, value: v.value, curve: v.curve, factors: v.factors, young: young, spread: spread, low: v.value / spread, high: v.value * spread
     });
   });
-  var odds = launchOdds(launchCandidates(snapshot, rows, marketWeek));
-  // the board's implied value: what a launch would be worth, times the odds that it happens
-  rows.forEach(function (r) { r.expected = Math.max(1, Math.round(r.value * r.odds)); });
-  rows.sort(function (a, b) { return b.expected - a.expected || (a.slug < b.slug ? -1 : 1); });
+  rows.sort(function (a, b) { return b.value - a.value || (a.slug < b.slug ? -1 : 1); });
   rows.forEach(function (r, i) { r.rank = i + 1; r.plan = farmPlan(r); });
   aside.sort(function (a, b) { return b.tvl - a.tvl; });
   return {
-    asOf: snapshot.as_of, marketWeek: marketWeek, fit: fit, tests: tests, ranges: ranges, odds: odds, tokens: tokens, comps: comps,
+    asOf: snapshot.as_of, marketWeek: marketWeek, fit: fit, tests: tests, ranges: ranges, tokens: tokens, comps: comps,
     rows: rows, aside: aside, ledger: ledgerOf(protocols, rows, tokens, aside),
     counts: { protocols: protocols.length, watchlist: snapshot.watchlist.length, noToken: rows.length + aside.length,
       onRecord: protocols.filter(function (p) { return tokenStatus(p) === 'on-record'; }).length }
@@ -364,12 +262,12 @@ function buildRadar(snapshot) {
 function checkBoard(rows, board) {
   var same = board.filter(function (b, i) {
     var r = rows[i];
-    return r && r.slug === b[0] && r.rank === b[1] && r.expected === b[2] && digest(stepStrings(r.plan)) === b[3];
+    return r && r.slug === b[0] && r.rank === b[1] && r.value === b[2] && digest(stepStrings(r.plan)) === b[3];
   }).length;
   return { same: same, of: board.length, ok: same === board.length && same === rows.length };
 }
 
-/* ---- 6. Reading the snapshot. */
+/* ---- 4. Reading the snapshot. */
 /** 'trades' has a market cap, 'on-record' a ticker or CoinGecko id but no cap, 'none' neither. */
 function tokenStatus(p) { return p.mcap_usd > 0 ? 'trades' : (p.gecko_id || p.symbol) ? 'on-record' : 'none'; }
 var HOUSE_CATEGORIES = ['Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX'];
@@ -409,22 +307,12 @@ function sectorOf(category) {
   return 'Network';
 }
 
-/* ---- 7. Small maths and formats. */
+/* ---- 5. Small maths and formats. */
 function log10(x) { return Math.log(x) / Math.LN10; }
 function clamp(x, lo, hi) { return Math.min(hi, Math.max(lo, x)); }
 function median(values) {
   var s = values.slice().sort(function (a, b) { return a - b; }), i = (s.length - 1) / 2, lo = Math.floor(i);
   return s.length ? (s[lo] + s[Math.ceil(i)]) / 2 : 0;
-}
-function mean(values) { return values.reduce(function (s, v) { return s + v; }, 0) / values.length; }
-function sigmoid(z) { return 1 / (1 + Math.exp(-z)); }
-function dot(w, x) { return w.reduce(function (s, v, i) { return s + v * x[i]; }, 0); }
-/** Gaussian elimination: the Newton step H d = g (H is positive definite, so no pivoting is needed). */
-function solve(H, g) {
-  var n = g.length, M = H.map(function (r, i) { return r.concat(g[i]); }), x = [], i, j, k;
-  for (i = 0; i < n; i++) for (j = i + 1; j < n; j++) { var f = M[j][i] / M[i][i]; for (k = i; k <= n; k++) M[j][k] -= f * M[i][k]; }
-  for (i = n - 1; i >= 0; i--) { var s = M[i][n]; for (j = i + 1; j < n; j++) s -= M[i][j] * x[j]; x[i] = s / M[i][i]; }
-  return x;
 }
 /** Theil-Sen line: the median of all pairwise slopes, so a 400x outlier cannot tilt the curve. */
 function theilSen(points) {
@@ -440,7 +328,7 @@ function usd(x) {
   if (a >= 1e9) return sign + '$' + (a / 1e9).toFixed(2) + 'B';
   if (a >= 1e6) return sign + '$' + (a / 1e6).toFixed(a >= 1e8 ? 0 : 1) + 'M';
   if (a >= 1e3) return sign + '$' + Math.round(a).toString().replace(/\B(?=(\d{3})+$)/g, ',');
-  if (a > 0 && a < 0.01) return sign + '<$0.01';
+  if (a > 0 && a < 0.01) return 'under $0.01';
   return sign + '$' + a.toFixed(a >= 100 ? 0 : 2);
 }
 /** FNV-1a, so the page can prove its plan text is the text board.json carries. */
@@ -450,7 +338,7 @@ function digest(strings) {
   return h.toString(16);
 }
 
-var api = { CONFIG: CONFIG, PLAYS: PLAYS, buildRadar: buildRadar, checkBoard: checkBoard, farmPlan: farmPlan, stepStrings: stepStrings, digest: digest, usd: usd, log10: log10, oddsX: oddsX, sigmoid: sigmoid };
+var api = { CONFIG: CONFIG, PLAYS: PLAYS, buildRadar: buildRadar, checkBoard: checkBoard, farmPlan: farmPlan, stepStrings: stepStrings, digest: digest, usd: usd, log10: log10 };
 root.Radar = api;
 if (typeof module === 'object' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

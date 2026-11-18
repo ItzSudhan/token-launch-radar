@@ -30,17 +30,15 @@ if (!Array.isArray(snapshot.protocols) || !Array.isArray(snapshot.watchlist) || 
 }
 const radar = Radar.buildRadar(snapshot);
 
-// implied_value_usd is the expected value the board ranks on: the value if it launches x the launch odds.
-// The value if it launches and its two held-out ranges (half, and four in five, of blind-priced tokens) ride beside it.
+// implied_value_usd is what a launch would be worth with the record as it stands; the range beside it holds half
+// of the blind-priced tokens like it.
 interface BoardRow {
-  rank: number; slug: string; name: string; implied_value_usd: number; value_if_launched_usd: number; launch_odds: number;
-  range_50_usd: [number, number]; range_80_usd: [number, number];
+  rank: number; slug: string; name: string; implied_value_usd: number; implied_low_usd: number; implied_high_usd: number;
   tier: string; sector: string; verdict: string; net_usd: number; farm_steps: string[];
 }
 const rows: BoardRow[] = radar.rows.map((r: any) => ({
-  rank: r.rank, slug: r.slug, name: r.name, implied_value_usd: r.expected, value_if_launched_usd: r.value,
-  launch_odds: Math.round(r.odds * 1000) / 1000,
-  range_50_usd: [Math.round(r.low), Math.round(r.high)], range_80_usd: [Math.round(r.low80), Math.round(r.high80)],
+  rank: r.rank, slug: r.slug, name: r.name, implied_value_usd: r.value,
+  implied_low_usd: Math.round(r.low), implied_high_usd: Math.round(r.high),
   tier: r.tier, sector: r.sector, verdict: r.plan.verdict, net_usd: Math.round(r.plan.net * 100) / 100,
   farm_steps: Radar.stepStrings(r.plan),
 }));
@@ -72,13 +70,12 @@ if (issue !== null) {
 
 /** The held-out figures in one block for the run log (the page shows the same ones in its KPI strip). */
 function summary(): string {
-  const { tests, odds, ranges } = radar, k = odds.kept, v = tests.ladder[3];
+  const { tests, ranges } = radar, v = tests.ladder[3];
   const pct = (x: number) => `${Math.round(x * 100)}%`, verdicts = (t: string) => rows.filter((r) => r.verdict === t).length;
   return [
     `ledger: ${radar.ledger.map((g: [string, number]) => `${g[1]} ${g[0].toLowerCase()}`).join(' + ')}`,
     `value miss, held out: x${v.miss.toFixed(2)} each-left-out (${pct(v.within3)} within 3x), x${v.split.miss.toFixed(2)} older-to-newer (${tests.older} -> ${tests.newer})`,
-    `launch odds: ${k.each.right}/${k.each.n} right each-left-out (base ${pct(odds.baseAcc)}), ${k.split.right}/${k.split.n} newest third (base ${pct(odds.steps[0].split.acc)}); kept "${k.name}"`,
-    `ranges hold: 50% ${ranges.each[0]}/${ranges.n} and ${ranges.split[0]}/${ranges.newer}; 80% ${ranges.each[1]}/${ranges.n} and ${ranges.split[1]}/${ranges.newer}`,
+    `range (half of blind misses) holds: ${ranges.each}/${ranges.n} each-left-out, ${ranges.split}/${ranges.newer} older-to-newer`,
     `on $1,000: ${verdicts('FARM')} FARM, ${verdicts('THIN')} THIN, ${verdicts('SKIP')} SKIP`,
   ].join('\n');
 }
