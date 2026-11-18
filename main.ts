@@ -30,13 +30,17 @@ if (!Array.isArray(snapshot.protocols) || !Array.isArray(snapshot.watchlist) || 
 }
 const radar = Radar.buildRadar(snapshot);
 
+// implied_value_usd is the expected value the board ranks on: the value if it launches x the launch odds.
+// The value if it launches and its two held-out ranges (half, and four in five, of blind-priced tokens) ride beside it.
 interface BoardRow {
-  rank: number; slug: string; name: string; implied_value_usd: number; implied_low_usd: number; implied_high_usd: number;
+  rank: number; slug: string; name: string; implied_value_usd: number; value_if_launched_usd: number; launch_odds: number;
+  range_50_usd: [number, number]; range_80_usd: [number, number];
   tier: string; sector: string; verdict: string; net_usd: number; farm_steps: string[];
 }
 const rows: BoardRow[] = radar.rows.map((r: any) => ({
-  rank: r.rank, slug: r.slug, name: r.name, implied_value_usd: r.value,
-  implied_low_usd: Math.round(r.low), implied_high_usd: Math.round(r.high),
+  rank: r.rank, slug: r.slug, name: r.name, implied_value_usd: r.expected, value_if_launched_usd: r.value,
+  launch_odds: Math.round(r.odds * 1000) / 1000,
+  range_50_usd: [Math.round(r.low), Math.round(r.high)], range_80_usd: [Math.round(r.low80), Math.round(r.high80)],
   tier: r.tier, sector: r.sector, verdict: r.plan.verdict, net_usd: Math.round(r.plan.net * 100) / 100,
   farm_steps: Radar.stepStrings(r.plan),
 }));
@@ -66,32 +70,16 @@ if (issue !== null) {
   process.exit(1);
 }
 
-/** The board in words, written into the dashboard folder beside the page: what it holds and where the code is. */
-function brief(screenshots: string[]): string {
-  const { fit, tests, counts } = radar, usd = Radar.usd, n = rows.length;
-  const tier = (t: string) => radar.rows.filter((r: any) => r.tier === t).length;
-  const verdicts = (v: string) => rows.filter((r) => r.verdict === v).length;
-  const pct = (x: number) => `${Math.round(x * 100)}%`, x2 = (x: number) => `x${x.toFixed(2)}`;
-  const full = tests.ladder[3], flat = tests.ladder[0], top = radar.rows[0], plan = top.plan;
-  const signed = (x: number) => `${x < 0 ? '' : '+'}${usd(x)}`;
+/** The held-out figures in one block for the run log (the page shows the same ones in its KPI strip). */
+function summary(): string {
+  const { tests, odds, ranges } = radar, k = odds.kept, v = tests.ladder[3];
+  const pct = (x: number) => `${Math.round(x * 100)}%`, verdicts = (t: string) => rows.filter((r) => r.verdict === t).length;
   return [
-    '# Token Radar: the board in words, written by main.ts with board.json from the model the page loads (1-model.js)',
-    '',
-    `- Board: ${n} protocols that record no token, ranked by implied value. Watchlist ${tier('watchlist')}/${counts.watchlist} covered, plus ${tier('early')} below its floor and ${tier('shared')} beside it.`,
-    `- Kept apart: ${radar.tokens.length} protocols whose token trades (${radar.comps.length} are the comparables), ${counts.onRecord} with a token on record, ${radar.aside.length} set aside by rule (wrapped, staked, bridged, exchange, versioned, or kin of a token on record).`,
-    `- Value, impliedValue(): 10^${fit.a.toFixed(2)} x TVL^${fit.b.toFixed(3)} x sector x (1 + 7-day growth over the market's ${radar.marketWeek.toFixed(1)}%)^${fit.b.toFixed(3)} x age factor for days with no token x kinship. fitCurve() fits every constant on the snapshot's traded tokens; no protocol is named in the code.`,
-    `- Test, backtest(): each traded token priced blind by a fit that left it out: median miss ${x2(full.miss)}, ${pct(full.within3)} within 3x. One flat cap/TVL multiple: ${x2(flat.miss)}, ${pct(flat.within3)}. Tokens under ${Math.round(Radar.CONFIG.youngDays / 30)} months on record miss ${x2(tests.spread.young.miss)}, older ones ${x2(tests.spread.seasoned.miss)}, so young rows carry a wider range.`,
-    `- Farm plan, farmPlan(): 8 steps a protocol, each with its dollar cost and minutes, then slice - fees - T-bill forgone = net. On $1,000: ${verdicts('FARM')} FARM, ${verdicts('THIN')} THIN, ${verdicts('SKIP')} SKIP.`,
-    `- Page, 2-app.js: sort on every column, 8 filters, ticket and airdrop-share controls, a detail view per protocol, tabs for traded tokens, set-aside and method. It recomputes all ${n} rows; checkBoard() matches each against board.json.`,
-    '- Look, 3-style.css: ink on paper, one cobalt accent, colour kept for the FARM / THIN / SKIP verdicts and the tiers, tabular figures; hand-written, no framework.',
-    `- Screenshots: ${screenshots.map((s) => s.replace(/\.[a-z]+$/, '')).join('; ')}.`,
-    '',
-    `Rank 1 in full, ${top.name}: TVL ${usd(top.tvl)}, 7-day TVL ${top.change7d == null ? 'n/a' : `${top.change7d.toFixed(1)}%`}, ${top.age == null ? 'no listing date' : `${top.age} days with no token`}.`,
-    `Value: size curve ${usd(top.curve)} ${top.factors.map((f: [string, number]) => `x ${f[0].toLowerCase()} ${f[1].toFixed(2)}`).join(' ')} = ${usd(top.value)}, range ${usd(top.low)} to ${usd(top.high)}.`,
-    `Its farm plan as board.json carries it (${plan.label} on ${plan.chain}, ${usd(plan.capital)} for ${plan.hold} days):`,
-    ...Radar.stepStrings(plan).map((s: string, i: number) => `${i + 1}. ${s}`),
-    `Sums: slice ${usd(plan.slice)} - fees ${usd(plan.fees)} - T-bill forgone ${usd(plan.forgone)} = net ${signed(plan.net)} (${plan.verdict}) for ${(plan.minutes / 60).toFixed(1)} h of work${plan.breakEven ? `; pays from a ${usd(plan.breakEven)} ticket` : ''}.`,
-    '',
+    `ledger: ${radar.ledger.map((g: [string, number]) => `${g[1]} ${g[0].toLowerCase()}`).join(' + ')}`,
+    `value miss, held out: x${v.miss.toFixed(2)} each-left-out (${pct(v.within3)} within 3x), x${v.split.miss.toFixed(2)} older-to-newer (${tests.older} -> ${tests.newer})`,
+    `launch odds: ${k.each.right}/${k.each.n} right each-left-out (base ${pct(odds.baseAcc)}), ${k.split.right}/${k.split.n} newest third (base ${pct(odds.steps[0].split.acc)}); kept "${k.name}"`,
+    `ranges hold: 50% ${ranges.each[0]}/${ranges.n} and ${ranges.split[0]}/${ranges.newer}; 80% ${ranges.each[1]}/${ranges.n} and ${ranges.split[1]}/${ranges.newer}`,
+    `on $1,000: ${verdicts('FARM')} FARM, ${verdicts('THIN')} THIN, ${verdicts('SKIP')} SKIP`,
   ].join('\n');
 }
 
@@ -118,7 +106,6 @@ const data = {
 writeFileSync(join(out, 'data.js'), `window.RADAR_INPUT=${JSON.stringify(data)};\n`);
 copyFiles(join(here, 'dashboard'), join(out, 'dashboard'));
 const shots = copyFiles(join(here, 'screenshots'), join(out, 'screenshots'));
-writeFileSync(join(out, 'dashboard', '0-brief.md'), brief(shots));
 if (shots.length < 3 && !process.argv.includes('--no-dossier')) {
   process.stderr.write(`token radar: screenshots/ holds ${shots.length} images; the gate wants 3 (board, detail, filtered)\n`);
   process.exit(1);
@@ -129,5 +116,5 @@ if (shots.length >= 3) {
 }
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${rows.length} ranked (${snapshot.watchlist.length} watchlist), ` +
-    `${radar.comps.length} comparables, ${radar.aside.length} set aside; top ${rows[0]!.name} at $${rows[0]!.implied_value_usd}\n`,
+    `${radar.comps.length} comparables, ${radar.aside.length} set aside; top ${rows[0]!.name} at $${rows[0]!.implied_value_usd}\n${summary()}\n`,
 );
