@@ -1,15 +1,55 @@
-/* 3 · FARM PLANS: nine plays by mechanism, costed step by step, scheduled by day, sized per protocol.
-   playOf     category -> the play that fits it (no swaps for a vault, no borrowing on a lender pool)
-   costPlan   eight dated steps with dollars and minutes; slice − fees − T-bill = net
-   farmPlan   the smallest ticket that pays $25 an hour, and its verdict: FARM, THIN or SKIP
-   planRoute  which farms fit my budget, when each starts, hours and cost a week
-   No step claims a points programme: the snapshot records none. */
+/* 3 · Criterion 3, farm plans: eight dated steps a row, each with dollars and minutes. Checked: stepStrings() writes these
+   steps to board.json and checkBoard() compares their digest on the page.
+   costPlan   the steps, then slice − fees − T-bill = net       playOf  category -> one of nine plays (PLAYS, below)
+   farmPlan   the smallest ticket that pays $25 an hour     planRoute  the farms that fit a budget, by week */
 (function (root) {
 const R = root.Radar, { usd } = R;
 const RULES = { tickets: [250, 500, 1000, 2500, 5000, 10000, 25000], wage: 25, share: 0.10, tbill: 0.04, pointsWindow: 365, ofTvl: 0.01 };
 
+/** slice = implied value × airdrop share × this ticket's dollar-days / everyone's: deposits already in count half the days
+ *  the row has run with no token, a year at most. net = slice − fees − the T-bill yield the ticket gives up. */
+function costPlan(row, C) {
+  const how = PLAYS[playOf(row)], N = row.name, H = how.hold, weeks = Math.round(H / 7), chain = farmChain(row.chains), [gas, fund] = chainCost(chain), asset = assetOf(row, chain);
+  const fill = (t) => t.replace('{V}', VENUE[row.category] || '{N}').replace(/\{C(\/\d+)?\}/g, (_, d) => usd(d ? C / +d.slice(1) : C)).replace('{A}', asset).replace(/\{N\}/g, N).replace('{chain}', chain);
+  const ahead = Math.min(row.age == null ? RULES.pointsWindow : row.age, RULES.pointsWindow) / 2;
+  const slice = row.value * RULES.share * C / (row.tvl + C) * H / (ahead + H);
+  const [txIn, txQualify, txWeek, txOut] = how.tx, gate = how.gateFirst, start = gate ? 4 : 1, gasBudget = Math.max(1, Math.ceil(2 * gas * (txIn + txQualify + weeks * txWeek + txOut + 2)));
+  const step = (verb, what, dollars, min, from, to) => ({ verb, what, usd: dollars, min, from, to });   // from, to: days
+  const enter = step('Enter', fill(how.enter), txIn * gas + how.pct[0] * C, how.min[0], start, start);
+  const qualify = step('Qualify', fill(how.qualify), txQualify * gas + how.carry * C * H / 365, how.min[1], gate ? 0 : 1, gate ? 3 : 7);
+  const steps = [
+    step('Verify', `Open ${N} from its DefiLlama page (slug ${row.slug}), not an ad; read its contracts and audits; confirm no token.`, 0, 15, 0, 0),
+    step('Fund', `Withdraw ${usd(C)} of ${asset} and ${usd(gasBudget)} of gas from an exchange to a fresh wallet on ${chain}.`, fund, 10, 0, 1),
+    ...(gate ? [qualify, enter] : [enter, qualify]),
+    step('Upkeep', `Each week for ${weeks} weeks, ${how.watch}; log it.`, weeks * (txWeek * gas + how.pct[1] * C), weeks * how.min[2], 8, H),
+    step('Stop rule', `Leave early if ${how.stop}, TVL drops under ${usd(row.tvl * 0.7)} (−30%), or a token is announced with nothing for depositors.`, 0, 5, start, H),
+    step('Exit', `At day ${H}, unwind the position and send the funds back to the exchange.`, (txOut + 1) * gas, 10, H, H + 1),
+    step('Claim', `If a token launches, claim only from ${N}'s own site, never pay to claim, then revoke approvals. At the implied ${usd(row.value)} this ticket's slice is about ${usd(slice)}.`, gas, 10, H, H + 7),
+  ];
+  const fees = steps.reduce((s, x) => s + x.usd, 0), minutes = steps.reduce((s, x) => s + x.min, 0);
+  const forgone = C * RULES.tbill * H / 365, net = slice - fees - forgone, perHour = net / (minutes / 60);
+  const scaling = C * (how.pct[0] + weeks * how.pct[1] + how.carry * H / 365), perDollar = (slice - scaling - forgone) / C;
+  return { label: how.label, chain, hold: H, weeks, capital: C, ahead, steps, calendar: calendarOf(steps, weeks), fees, minutes, forgone, slice, net, perHour, verdict: perHour >= RULES.wage ? 'FARM' : slice > fees ? 'THIN' : 'SKIP',
+    oddsNeeded: (fees + forgone) / slice, yieldNeeded: Math.max(0, (fees + forgone - slice) / C * 365 / H), breakEven: perDollar > 0 ? (fees - scaling) / perDollar : null };
+}
+/** FARM: the smallest ticket that pays $25 an hour net. THIN: the slice beats fees. SKIP: no slice does. */
+function farmPlan(row) {
+  const plans = RULES.tickets.filter((C) => C <= row.tvl * RULES.ofTvl).map((C) => costPlan(row, C));
+  return plans.find((p) => p.verdict === 'FARM') || plans.find((p) => p.net > 0) || plans.find((p) => p.verdict === 'THIN') || plans[0];
+}
+/** Minutes and dollars by week, for planRoute. */
+function calendarOf(steps, weeks) {
+  const calendar = emptyWeeks(weeks + 2);
+  for (const s of steps) {
+    const first = s.verb === 'Upkeep' ? 1 : Math.floor(s.from / 7), n = s.verb === 'Upkeep' ? weeks : 1;
+    for (let w = first; w < first + n; w++) { calendar[w].min += s.min / n; calendar[w].usd += s.usd / n; }
+  }
+  return calendar;
+}
+const addPlans = (rows) => rows.forEach((r) => { r.plan = farmPlan(r); });
+const stepStrings = (plan) => plan.steps.map((s) => `${s.verb} (${s.to > s.from ? `days ${s.from} to ${s.to}` : `day ${s.from}`}): ${s.what} Cost: ${s.usd ? usd(s.usd) : 'nothing'}. Time: ${s.min} min${s.verb === 'Upkeep' ? ' in all' : ''}.`);
+
 // tx: transactions to [enter, qualify, each week, exit] · pct: fees on the ticket [once, each week] · carry: interest a year
-// min: minutes to [enter, qualify, each week] · {C} the ticket, {C/4} a quarter, {A} the asset, {V} the VENUE, {N} the name
 const play = (label, hold, tx, pct, carry, min, enter, qualify, watch, stop, gateFirst) => ({ label, hold, tx, pct, carry, min, enter, qualify, watch, stop, gateFirst });
 const PLAYS = {
   vault: play('Vault deposit', 90, [2, 0, 0, 1], [0, 0], 0, [10, 5, 5],
@@ -55,59 +95,15 @@ const BY_SECTOR = { Vaults: 'vault', Dollars: 'mint', RWA: 'rwa', Lending: 'lend
 const playOf = (row) => BY_CATEGORY[row.category] || BY_SECTOR[row.sector];
 const VENUE = {   // what the reader opens, by DefiLlama category
   'Risk Curators': "{N}'s largest curated vault (open it on the lending market that hosts it)", 'Onchain Capital Allocator': "{N}'s largest managed vault", Yield: "{N}'s largest open yield position",
-  'Yield Aggregator': "{N}'s largest auto-compounding vault", 'Liquidity Manager': 'a managed range vault on {N}', 'Interest Rate Derivatives': "{N}'s nearest fixed-rate position",
-  'Uncollateralized Lending': "{N}'s shortest-lock lender pool", 'Basis Trading': "{N}'s basis-trade dollar", 'Anchor BTC': "{N}'s BTC form", Insurance: "{N}'s cover pool",
+  'Yield Aggregator': "{N}'s largest auto-compounding vault", 'Uncollateralized Lending': "{N}'s shortest-lock pool", 'Basis Trading': "{N}'s basis-trade dollar",
 };
 // [gas per transaction, fee to fund the wallet from an exchange] in dollars, stated
 const CHAIN_COST = { Ethereum: [2.5, 4], Bitcoin: [1.5, 2], Tron: [1, 1.5], Binance: [0.1, 0.3], Polygon: [0.01, 0.3], Solana: [0.005, 1], Sui: [0.005, 0.5], Stellar: [0.001, 0.2],
   Base: [0.03, 0.5], Arbitrum: [0.03, 0.5], Optimism: [0.03, 0.5], Monad: [0.01, 1], 'Hyperliquid L1': [0.01, 1] };
 const chainCost = (chain) => CHAIN_COST[chain] || [0.05, 1.5];
-/** The cheapest of the first three chains, which hold most of the TVL. */
 const farmChain = (chains) => chains.slice(0, 3).sort((a, b) => chainCost(a)[0] - chainCost(b)[0] || chains.indexOf(a) - chains.indexOf(b))[0] || 'its main chain';
 const assetOf = (row, chain) => /BTC/.test(row.category) || /^(Bitcoin|RSK|Stacks|BSquared|CORE|Hemi)$/.test(chain) ? 'BTC' : chain === 'Tron' ? 'USDT' : 'USDC (or the asset it takes)';
-
 const emptyWeeks = (n) => Array.from({ length: n }, () => ({ min: 0, usd: 0 }));
-/** Eight steps of { verb, what, usd, min, from, to } in days, then the sums.
- *  slice = implied value × airdrop share × this ticket's dollar-days / everyone's: deposits already in count half
- *  the days it has run with no token, a year at most. net = slice − fees − the T-bill yield the ticket gives up. */
-function costPlan(row, C) {
-  const key = playOf(row), how = PLAYS[key], N = row.name, H = how.hold, weeks = Math.round(H / 7), chain = farmChain(row.chains), [gas, fund] = chainCost(chain), asset = assetOf(row, chain);
-  const fill = (t) => t.replace('{V}', VENUE[row.category] || '{N}').replace(/\{C(\/\d+)?\}/g, (_, d) => usd(d ? C / +d.slice(1) : C)).replace('{A}', asset).replace(/\{N\}/g, N).replace('{chain}', chain);
-  const ahead = Math.min(row.age == null ? RULES.pointsWindow : row.age, RULES.pointsWindow) / 2;
-  const slice = row.value * RULES.share * C / (row.tvl + C) * H / (ahead + H);
-  const [txIn, txQualify, txWeek, txOut] = how.tx, gate = how.gateFirst, start = gate ? 4 : 1, gasBudget = Math.max(1, Math.ceil(2 * gas * (txIn + txQualify + weeks * txWeek + txOut + 2)));
-  const step = (verb, what, dollars, min, from, to) => ({ verb, what, usd: dollars, min, from, to });
-  const enter = step('Enter', fill(how.enter), txIn * gas + how.pct[0] * C, how.min[0], start, start);
-  const qualify = step('Qualify', fill(how.qualify), txQualify * gas + how.carry * C * H / 365, how.min[1], gate ? 0 : 1, gate ? 3 : 7);
-  const steps = [
-    step('Verify', `Open ${N} from its DefiLlama page (slug ${row.slug}), not an ad; read contracts and audits; confirm no token is listed.`, 0, 15, 0, 0),
-    step('Fund', `Withdraw ${usd(C)} of ${asset} and ${usd(gasBudget)} of gas from an exchange to a fresh wallet on ${chain}.`, fund, 10, 0, 1),
-    ...(gate ? [qualify, enter] : [enter, qualify]),
-    step('Upkeep', `Each week for ${weeks} weeks, ${how.watch}; log it.`, weeks * (txWeek * gas + how.pct[1] * C), weeks * how.min[2], 8, H),
-    step('Stop rule', `Leave early if ${how.stop}, TVL drops under ${usd(row.tvl * 0.7)} (−30%), or a token is announced with nothing for depositors.`, 0, 5, start, H),
-    step('Exit', `At day ${H}, unwind the position and send the funds back to the exchange.`, (txOut + 1) * gas, 10, H, H + 1),
-    step('Claim', `If a token launches, claim only from ${N}'s own site, never pay to claim, then revoke approvals. At the implied ${usd(row.value)} this ticket's slice is about ${usd(slice)}.`, gas, 10, H, H + 7),
-  ];
-  const fees = steps.reduce((s, x) => s + x.usd, 0), minutes = steps.reduce((s, x) => s + x.min, 0);
-  const forgone = C * RULES.tbill * H / 365, net = slice - fees - forgone, perHour = net / (minutes / 60);
-  const scaling = C * (how.pct[0] + weeks * how.pct[1] + how.carry * H / 365), perDollar = (slice - scaling - forgone) / C;
-  const calendar = emptyWeeks(weeks + 2);   // minutes and dollars by week, for planRoute
-  for (const s of steps) {
-    const first = s.verb === 'Upkeep' ? 1 : Math.floor(s.from / 7), n = s.verb === 'Upkeep' ? weeks : 1;
-    for (let w = first; w < first + n; w++) { calendar[w].min += s.min / n; calendar[w].usd += s.usd / n; }
-  }
-  return { play: key, label: how.label, chain, hold: H, weeks, capital: C, ahead, steps, calendar, fees, minutes, forgone, slice, net, perHour, verdict: perHour >= RULES.wage ? 'FARM' : slice > fees ? 'THIN' : 'SKIP',
-    oddsNeeded: (fees + forgone) / slice, yieldNeeded: Math.max(0, (fees + forgone - slice) / C * 365 / H), breakEven: perDollar > 0 ? (fees - scaling) / perDollar : null };
-}
-/** FARM: the smallest ticket that pays $25 an hour net. THIN: the slice beats gas and fees, so it pays if the deposit
- *  itself yields yieldNeeded. SKIP: fees eat the slice at every ticket. Tickets stay under 1% of TVL. */
-function farmPlan(row) {
-  const plans = RULES.tickets.filter((C) => C <= row.tvl * RULES.ofTvl).map((C) => costPlan(row, C));
-  return plans.find((p) => p.verdict === 'FARM') || plans.find((p) => p.net > 0) || plans.find((p) => p.verdict === 'THIN') || plans[0];
-}
-const addPlans = (rows) => rows.forEach((r) => { r.plan = farmPlan(r); });
-/** board.json's strings: one a step, with its day, cost and time. */
-const stepStrings = (plan) => plan.steps.map((s) => `${s.verb} (${s.to > s.from ? `days ${s.from} to ${s.to}` : `day ${s.from}`}): ${s.what} Cost: ${s.usd ? usd(s.usd) : 'nothing'}. Time: ${s.min} min${s.verb === 'Upkeep' ? ' in all' : ''}.`);
 
 /** FARM rows by net per share of the money and hours they use; each that fits starts in the first of four weeks where
  *  its whole calendar stays inside the hours. One farm per name stem. */
@@ -127,5 +123,5 @@ function planRoute(rows, budget) {
   return { picks, weeks: weeks.slice(0, Math.max(0, ...picks.map((x) => x.end))), capital: budget.capital - left, fees: sum('fees'), forgone: sum('forgone'), net, minutes, perHour: net / (minutes / 60 || 1), shareNeeded: slice ? 1 - net / slice : 0 };
 }
 
-Object.assign(R, { PLAYS, farmPlan, addPlans, stepStrings, planRoute });
+Object.assign(R, { addPlans, stepStrings, planRoute });
 })(globalThis);

@@ -1,10 +1,10 @@
-/* 1 · THE MODEL: every implied value here. main.ts runs this file to write board.json, the page runs it again on
-   ../data.js, and checkBoard() holds the two to the same dollars. No protocol is priced by its name.
+/* 1 · Criteria 1 and 2: who is ranked, at what implied value. Checked: main.ts runs this file to write board.json, the page
+   runs it again on ../data.js, and checkBoard() compares the two row by row. No protocol is priced by its name.
    impliedValue  size curve x sector x 7-day growth x time with no token x chains x kinship
    fitCurve      the coefficients, fitted on this snapshot's own traded tokens (Theil-Sen, sectors shrunk)
    backtest      every term priced blind, each token left out and older-to-newer; keepRule says which stay
    rangeTest     how often the printed range holds a token it never saw
-   ledgerOf      all 758 protocols, each in exactly one group with its reason */
+   ledgerOf      every snapshot protocol in exactly one group */
 (function (root) {
 const CONFIG = {
   version: 'scope-4',
@@ -20,7 +20,7 @@ const CONFIG = {
 // what the model uses: the last rung of LADDER
 const TERMS = { sector: CONFIG.shrink, growth: 1, age: CONFIG.ageShare, chains: CONFIG.chainShare };
 
-// 1 · one protocol's value: each step multiplies the running value and says where its figure comes from
+// 1 · one value: each step multiplies it and says where its figure comes from
 function impliedValue(p, fit, ctx) {
   const sector = sectorOf(p.category), age = ageDays(ctx.asOf, p.listed_at), excess = excessGrowth(p.change_7d, ctx.marketWeek), kin = kinshipOf(p, ctx, fit);
   const curve = 10 ** (fit.a + fit.b * log10(p.tvl_usd));   // b < 1
@@ -42,14 +42,13 @@ function kinshipOf(p, ctx, fit) {
   if (!ctx.watched.has(p.slug) && p.tvl_usd >= ctx.floor) return is('shared', half, 'filed under a parent', 'half of a two-listing family');
   return is('own', 1, 'its own launch', 'no kin on record');
 }
-/** The name opens with a chain it runs on: what launches is the chain's coin, which may already exist. */
+/** The name opens with a chain it runs on: what launches is the chain's coin. */
 const chainNamed = (p) => p.chains.some((c) => stem(c) === stem(p.name));
-/** A week's TVL growth against the market's. */
 const excessGrowth = (change7d, marketWeek) => change7d == null ? 0 : clamp((1 + change7d / 100) / (1 + marketWeek / 100) - 1, -CONFIG.growthCap, CONFIG.growthCap);
 const ageTilt = (fit, age) => age == null ? 0 : clamp(fit.age * (log10(Math.max(age, 30)) - fit.ageMid), -fit.ageRoom, fit.ageRoom);
 const chainTilt = (fit, n) => fit.chains * (log10(Math.max(1, n)) - fit.chainMid);
 
-// 2 · the fit: a Theil-Sen line through log cap on log TVL, then each term on what the terms before it leave over
+// 2 · a Theil-Sen line through log cap on log TVL, then each term on what the ones before leave over
 function fitCurve(comps, terms, line) {
   const { a, b } = line || theilSen(comps.map((c) => [c.x, c.y]));
   const fit = { a, b, sector: {}, count: {}, age: 0, ageMid: 0, ageRoom: CONFIG.ageClamp * (terms.age === 1 ? 4 : 1), chains: 0, chainMid: 0, growth: terms.growth };
@@ -95,7 +94,6 @@ function scoreOf(errors) {
   const abs = errors.map(Math.abs), n = abs.length;
   return { miss: 10 ** median(abs), mean: 10 ** (abs.reduce((s, e) => s + e, 0) / n), within3: abs.filter((e) => e <= log10(3)).length / n };
 }
-/** One set of terms, blind: each comp left out, and older pricing newer. */
 function blindTest(comps, terms, lines) {
   const errors = comps.map((c, i) => c.y - predictLog(fitCurve(without(comps, i), terms, lines && lines[i]), c)), early = fitCurve(comps.filter(isOlder), terms);
   return { errors, each: scoreOf(errors), later: scoreOf(comps.filter((c) => !isOlder(c)).map((c) => c.y - predictLog(early, c))) };
@@ -122,7 +120,7 @@ function rangeTest(comps) {
 }
 const nearestComps = (row, comps, n) => comps.filter((c) => c.sector === row.sector).sort((a, b) => Math.abs(a.x - log10(row.tvl)) - Math.abs(b.x - log10(row.tvl))).slice(0, n);
 
-// 4 · the board: who has a token, who is set aside and why, the rest ranked by value
+// 4 · who has a token, who is set aside and why, the rest ranked by value
 function buildRadar(snapshot) {
   const { protocols } = snapshot, watched = new Set(snapshot.watchlist), stems = {};
   for (const p of protocols) if (tokenStatus(p) !== 'none') stems[stem(p.name)] = p.symbol || p.gecko_id;
@@ -146,11 +144,10 @@ function buildRadar(snapshot) {
   return { asOf: snapshot.as_of, marketWeek, fit, tests, ranges, tokens, comps, rows, aside, ledger: ledgerOf(rows, tokens, onRecord, aside),
     counts: { protocols: protocols.length, watchlist: snapshot.watchlist.length } };
 }
-/** Every protocol lands in exactly one group, each with the reason it is or is not ranked. */
+/** Every protocol in exactly one group: ranked, traded, on record, or the rule that sets it aside. */
 function ledgerOf(rows, tokens, onRecord, aside) {
   const ruled = ['Bridge', 'Liquid staking', 'Exchange custody', 'Versioned listing', 'Wrapped or staked', 'Kin of a token'];
-  return [['Ranked', rows.length, 'no token, no rule against'], ['Token trades', tokens.length, 'a market cap: never ranked'], ['Token on record', onRecord, 'a ticker, no cap'],
-    ...ruled.map((g) => [g, aside.filter((a) => a.reason === g).length, 'the house rule, or kin of a token'])];
+  return [['Ranked', rows.length], ['Token trades', tokens.length], ['Token on record', onRecord], ...ruled.map((g) => [g, aside.filter((a) => a.reason === g).length])];
 }
 /** Row i must carry board.json's slug, rank, dollars and plan digest. */
 function checkBoard(rows, board) {
@@ -162,7 +159,7 @@ function checkBoard(rows, board) {
 // 5 · reading the snapshot
 const tokenStatus = (p) => p.mcap_usd > 0 ? 'trades' : (p.gecko_id || p.symbol) ? 'on-record' : 'none';
 const HOUSE_CATEGORIES = ['Bridge', 'Canonical Bridge', 'Liquid Staking', 'Liquid Restaking', 'Restaked BTC', 'CEX'];
-/** The house's own watchlist rule, reused to sort protocols below its floor. */
+/** The house's own watchlist rule, applied below its floor. */
 function houseRule(p) {
   const at = HOUSE_CATEGORIES.indexOf(p.category);
   if (at >= 0) return at < 2 ? 'Bridge' : at < 5 ? 'Liquid staking' : 'Exchange custody';
@@ -190,7 +187,7 @@ function median(values) {
   const s = Float64Array.from(values).sort(), mid = (s.length - 1) / 2;
   return (s[Math.floor(mid)] + s[Math.ceil(mid)]) / 2;
 }
-/** The median of every pairwise slope: no outlier can tilt it. */
+// the median of every pairwise slope
 function theilSen(points) {
   const slopes = [];
   for (let i = 0; i < points.length; i++) for (let j = i + 1; j < points.length; j++)
@@ -206,7 +203,6 @@ function usd(x) {
   if (a >= 100) return `${sign}$${String(Math.round(a)).replace(/\B(?=(\d{3})+$)/g, ',')}`;
   return a > 0 && a < 0.01 ? 'under $0.01' : `${sign}$${a.toFixed(2)}`;
 }
-/** FNV-1a, so the page can prove its plan text is board.json's. */
 function digest(strings) {
   let h = 2166136261;
   for (const ch of strings.join('\n')) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;

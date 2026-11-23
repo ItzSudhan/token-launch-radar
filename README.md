@@ -16,7 +16,7 @@ Each ranked protocol is one blip. Angle is its sector, distance from the centre 
 
 `10^a × TVL^b × sector × 7-day growth × time with no token × chains × kinship`, fitted on the snapshot's own traded tokens and priced again in the page, which checks every row against `board.json` with `checkBoard()`.
 
-Every term is tested blind two ways: each of 86 traded tokens left out, and the 53 older ones pricing the 33 newer. A term stays if the average miss falls in both tests and neither typical (median) miss grows by a tenth. The whole ladder is printed in the Method tab, with the terms that did not help.
+Every term is tested blind two ways: each of 86 traded tokens left out, and the 53 older ones pricing the 33 newer. A term stays if the average miss falls in both tests and neither typical (median) miss grows by a tenth. The whole ladder is printed under the scope by `backtest()`, with the terms that did not help. Past the size curve the older-to-newer median does not improve; its average does.
 
 | | each left out | older to newer |
 | --- | --- | --- |
@@ -34,7 +34,7 @@ Every term is tested blind two ways: each of 86 traded tokens left out, and the 
 
 ## The farm plans
 
-Nine plays by mechanism, eight dated steps each with dollars and minutes, sized to the smallest ticket that pays $25 an hour after gas, fees and the T-bill yield given up. FARM pays that. THIN covers gas and fees, and pays if the deposit itself earns the yield shown. SKIP loses to fees. The snapshot records no points programme, so no step claims one.
+Nine plays by mechanism, eight dated steps each with dollars and minutes, sized to the smallest ticket that pays $25 an hour after gas, fees and the T-bill yield given up. FARM pays that. THIN covers gas and fees but not $25 an hour; where it also falls short of the T-bill, the board shows the yearly yield the deposit itself must earn. SKIP loses to fees at every ticket tried. The snapshot records no points programme, so no step claims one.
 
 The planner takes a capital and an hours-a-week budget and picks, schedules and totals the farms that fit it (`planRoute()`).
 

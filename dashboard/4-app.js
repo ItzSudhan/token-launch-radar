@@ -1,13 +1,14 @@
-/* 4 · THE PAGE: nothing is priced here. buildRadar runs on ../data.js, checkBoard proves every row equals board.json.
-   boardView    evidence strip, ledger bar, filters, ranked table; linked to the scope both ways
-   detailView   waterfall() of the value, capStrip() against real caps, gantt() of the dated plan, costed steps
+/* 4 · Criteria 1 and 4, the page. Checked: buildRadar() runs on ../data.js and checkBoard() compares it.
+   boardView    proofs, ladder(), ledger, filters, ranked table; linked to the scope both ways
+   detailView   waterfall() of the value, capStrip() against real caps, gantt() and the costed, dated steps
    plannerView  planRoute's farms on the scope, their calendar, cost, hours and net */
 (() => {
+const PAGE_IS = 'Criteria 1, 4: buildRadar() rows, checked against board.json by checkBoard()';
 const M = window.Radar, IN = window.RADAR_INPUT;
 if (!IN || !M) return;
 const radar = M.buildRadar(IN.snapshot), { rows, fit, tests, ranges, comps, counts } = radar, $ = usd;
 M.addPlans(rows);
-const proof = M.checkBoard(rows, IN.board), layout = placeBlips(rows);
+const proof = M.checkBoard(rows, IN.board), layout = placeBlips(rows), listed = rows.filter((r) => r.tier === 'watchlist').length;
 
 // ── state, mirrored in the URL hash, so every view is a link
 const START = { view: 'board', p: '', q: '', tier: '', sector: '', chain: '', play: '', verdict: '', tvl: '', sort: 'rank', dir: '1', budget: '25000', hours: '5' };
@@ -19,7 +20,6 @@ function go(patch) {
   paint();
 }
 
-// ── formats
 const x = (v) => '×' + v.toFixed(2), pc = (v) => Math.round(v * 100) + '%', plus = (v) => (v < 0 ? '−$' : '+$') + Math.abs(Math.round(v)).toLocaleString('en'), hrs = (m) => (m / 60).toFixed(1) + ' h';
 const since = (d) => (d == null ? 'undated' : d < 365 ? d + ' d' : (d / 365).toFixed(1) + ' y');
 const tag = (v) => `<i class="tag ${v}">${v}</i>`, fn = (n) => `<code>${n}()</code>`;
@@ -29,37 +29,43 @@ const text = (cls, px, y, t) => `<text class="${cls}" x="${px}" y="${y}">${t}</t
 const svg = (w, h, inside) => `<svg class="fall" viewBox="0 0 ${w} ${h}">${inside}</svg>`;
 
 // ── filter and sort
-const tally = (of) => { const n = {}; rows.forEach((r) => [].concat(of(r)).forEach((v) => { n[v] = (n[v] || 0) + 1; })); return Object.keys(n).sort((a, b) => n[b] - n[a]).map((v) => [v, `${v} (${n[v]})`]); };
+const tally = (of) => { const n = {}; rows.forEach((r) => [].concat(of(r)).forEach((v) => { n[v] = (n[v] || 0) + 1; })); return Object.keys(n).sort((a, b) => n[b] - n[a]); };
 const FILTERS = {
   tier: (r) => r.tier, sector: (r) => r.sector, chain: (r) => r.chains, play: (r) => r.plan.label, verdict: (r) => r.plan.verdict, tvl: (r) => ['$10M+', '$50M+', '$200M+'].filter((t) => r.tvl >= parseFloat(t.slice(1)) * 1e6) };
 const keeps = (r) => `${r.name} ${r.category} ${r.chains}`.toLowerCase().includes(ui.q.toLowerCase()) && Object.keys(FILTERS).every((k) => !ui[k] || [].concat(FILTERS[k](r)).includes(ui[k]));
-const HEADS = [['rank', '#'], ['name', 'Protocol'], ['tvl', 'TVL'], ['excess', '7d v mkt'], ['age', 'No token'], ['value', 'Implied value'], ['net', 'Farm: net, plan, cost, time']];
+const HEADS = [['rank', '#'], ['name', 'Protocol'], ['tvl', 'TVL'], ['age', 'No token'], ['value', 'Implied value'],['net', 'Farm: ticket, cost, time <code>farmPlan()</code>']];
 const keyOf = (r) => ui.sort === 'rank' ? r.rank : ui.sort === 'name' ? r.name.toLowerCase() : -(ui.sort === 'net' ? r.plan.net : r[ui.sort]);
 const shown = () => rows.filter(keeps).sort((a, b) => { const p = keyOf(a), q = keyOf(b); return (p < q ? -1 : p > q ? 1 : a.rank - b.rank) * ui.dir; });
-const filterBar = (n) => `<div class="tools"><input data-key="q" placeholder="Search" value="${esc(ui.q)}">${each(Object.keys(FILTERS), (k) => `<select data-key="${k}" class="${ui[k] && 'on'}"><option value="">${k === 'tvl' ? 'TVL' : k[0].toUpperCase() + k.slice(1)} ▾</option>${each(tally(FILTERS[k]), ([v, t]) => `<option value="${v}"${v === ui[k] ? ' selected' : ''}>${t}</option>`)}</select>`)}` +
+const filterBar = (n) => `<div class="tools"><input data-key="q" placeholder="Search" value="${esc(ui.q)}">${each(Object.keys(FILTERS), (k) => `<select data-key="${k}" class="${ui[k] && 'on'}"><option value="">${k === 'tvl' ? 'TVL' : k[0].toUpperCase() + k.slice(1)} ▾</option>${each(tally(FILTERS[k]), (v) => `<option${v === ui[k] ? ' selected' : ''}>${v}</option>`)}</select>`)}` +
   `${n < rows.length ? '<button data-act="clear">Clear</button>' : ''}<button data-act="csv">CSV</button><em>${n}/${rows.length}</em></div>`;
 function scopePane(o, title, note) {
   const n = (v) => rows.filter((r) => r.plan.verdict === v).length;
-  return `<aside class="pane"><h2>${title}</h2><p>${note}</p>${drawScope(rows, layout, o)}${scopeLegend(n)}</aside>`;
+  return `<aside class="pane"><h2>${title}</h2><p>${note}</p>${drawScope(rows, layout, o)}${scopeLegend(n)}${ladder()}</aside>`;
+}
+/** Each term, its two blind misses (median, average) and keepRule's verdict. */
+function ladder() {
+  const [, curve] = tests.ladder, { full } = tests, miss = (s) => `<td>${x(s.miss)} <small>avg ${x(s.mean)}</small></td>`;
+  return `<table class="ladder"><tr><th>${fn('backtest')} each term added, blind</th><th>${comps.length} each left out</th><th>older ${tests.older} price newer ${tests.newer}</th><th>${fn('keepRule')}</th></tr>${each(tests.ladder, (t) => `<tr class="${t.kept && 'kept'}"><td>${t.name}</td>${miss(t.each)}${miss(t.later)}<td>${t.base ? 'base' : t.kept ? 'kept' : 'not kept'}</td></tr>`)}</table>` +
+    `<p class="legend">Kept if both averages fall and no median grows by a tenth. Past the size curve the older-to-newer median does not improve (${x(curve.later.miss)}, now ${x(full.later.miss)}); its average does. ${fn('rangeTest')}: the 50% range holds ${ranges.each}/${ranges.n}, newer ${ranges.later}/${ranges.newer}.</p>`;
 }
 
 // ── the board
-function evidence() {
-  const { full, flat, ladder } = tests;
-  return cells([[x(full.each.miss), `blind miss, each of ${comps.length} traded tokens left out; flat multiple ${x(flat.each.miss)}`], [x(full.later.miss), `older ${tests.older} pricing newer ${tests.newer}; flat ${x(flat.later.miss)}`],
-    [`${ranges.each}/${ranges.n}`, `unseen caps inside the 50% range; newer ${ranges.later}/${ranges.newer}`], [`${ladder.filter((t) => t.kept).length} of ${ladder.length - 1}`, `terms kept by ${fn('keepRule')}, all printed in Method`]]) +
-    `<p class="rule">${fn('impliedValue')} = <b>10^${fit.a.toFixed(2)} × TVL^${fit.b.toFixed(3)}</b> × sector × 7-day growth × time with no token × chains × kin</p>`;
+function proofs() {
+  const { full, flat } = tests, sum = radar.ledger.reduce((s, [, k]) => s + k, 0);
+  return cells([[`${listed}/${counts.watchlist}`, `watchlist ranked ${fn('buildRadar')}`], [`${proof.same}/${proof.of}`, `rows equal board.json ${fn('checkBoard')}`], [`${sum}/${counts.protocols}`, `protocols accounted for ${fn('ledgerOf')}`],
+    [x(full.each.miss), `blind miss, each left out; flat ${x(flat.each.miss)} ${fn('backtest')}`], [x(full.later.miss), `blind miss, older to newer; flat ${x(flat.later.miss)} ${fn('backtest')}`]]) +
+    `<p class="rule">${fn('impliedValue')} = size curve <b>10^${fit.a.toFixed(2)} × TVL^${fit.b.toFixed(3)}</b>, fitted by ${fn('fitCurve')} on this snapshot's ${comps.length} traded tokens, × sector × 7-day growth × time with no token × chains × kin</p>`;
 }
-const ledgerBar = () => `<section class="ledger"><div>${each(radar.ledger, ([, k], i) => `<i class="g${i}" style="flex:${k}"></i>`)}</div><p><b>${counts.protocols} read ${fn('ledgerOf')}</b>${each(radar.ledger, ([g, k, why], i) => `<span title="${why}"><i class="g${i}"></i>${g} <b>${k}</b></span>`)}</p></section>`;
-const at =(v) => M.clamp((M.log10(v) - 5.6) / 2.8 * 100, 0, 100), KIN = { own: '', chain: ' · chain-named', shared: ' · has a parent', token: ' · token kin' };
+const ledgerBar = () => `<section class="ledger"><div>${each(radar.ledger, ([, k], i) => `<i class="g${i}" style="flex:${k}"></i>`)}</div><p>${each(radar.ledger, ([g, k], i) => `<span><i class="g${i}"></i>${g} <b>${k}</b></span>`)}</p></section>`;
+const at =(v) => M.clamp((M.log10(v) - 5.6) / 2.8 * 100, 0, 100), KIN = { own: '', chain: ', chain-named', shared: ', shared', token: ', token kin' };
 const yieldOf = (p) => (p.yieldNeeded * 100).toFixed(1) + '%';
-const payOf =(p) => p.verdict === 'THIN' && p.net < 0 ? `if it yields <b>${yieldOf(p)}</b>` : `<b>${plus(p.net)}</b> on ${$(p.capital).replace(',000', 'k')}`;
-const boardRow =(r) => `<tr data-row="${r.slug}"><td>${r.rank}</td><td><b>${esc(r.name)}</b><small>${r.tier === 'watchlist' ? '<u></u>' : ''}${esc(r.category)}${KIN[r.kin]}</small></td><td class="r">${$(r.tvl)}</td><td class="r ${r.excess < 0 ? 'down' : 'up'}">${r.change7d == null ? 'n/a' : M.signed(r.excess * 100)}</td><td class="r">${since(r.age)}</td>` +
-  `<td class="val"><b>${$(r.value)}</b><span><i style="left:${at(r.low)}%;width:${at(r.high) - at(r.low)}%"></i><u style="left:${at(r.value)}%"></u></span><small>${$(r.low)} to ${$(r.high)}</small></td><td>${tag(r.plan.verdict)} ${payOf(r.plan)}<small>${r.plan.label} · ${$(r.plan.fees)} · ${hrs(r.plan.minutes)}</small></td></tr>`;
-const table = (list) => `<table class="board"><thead><tr>${each(HEADS, ([k, t]) => `<th data-sort="${k}">${t}${ui.sort === k ? (ui.dir > 0 ? ' ▾' : ' ▴') : ''}</th>`)}</tr></thead><tbody>${each(list, boardRow)}</tbody></table>`;
+const payOf =(p) => p.verdict === 'THIN' && p.net < 0 ? `if deposit earns <b>${yieldOf(p)}</b>+/yr` : `<b>${plus(p.net)}</b>, ${p.breakEven ? `even at ${$(p.breakEven)}` : 'no ticket pays'}`;
+const boardRow =(r) => `<tr data-row="${r.slug}"><td>${r.rank}</td><td><b>${esc(r.name)}</b><small>${r.tier === 'watchlist' ? '<u></u>' : ''}${esc(r.category)}${KIN[r.kin]}</small></td><td class="r">${$(r.tvl)}<small class="${r.excess < 0 ? 'down' : 'up'}">${r.change7d == null ? 'n/a' : M.signed(r.excess * 100)}</small></td><td class="r">${since(r.age)}</td>` +
+  `<td class="val"><b>${$(r.value)}</b><span><i style="left:${at(r.low)}%;width:${at(r.high) - at(r.low)}%"></i><u style="left:${at(r.value)}%"></u></span><small>${$(r.low)} to ${$(r.high)}</small></td><td>${tag(r.plan.verdict)} ${payOf(r.plan)}<small>${$(r.plan.capital).replace(',000', 'k')} · ${$(r.plan.fees)} · ${hrs(r.plan.minutes)} · ${r.plan.label}</small></td></tr>`;
+const table = (list) => `<table class="board"><thead><tr>${each(HEADS, ([k, t]) => `<th data-sort="${k}">${t}${k === 'tvl' ? '<small data-sort="excess">7-day</small>' : ''}${ui.sort === k ? (ui.dir > 0 ? ' ▾' : ' ▴') : ''}</th>`)}</tr></thead><tbody>${each(list, boardRow)}</tbody></table>`;
 function boardView() {
   const list = shown();
-  return `<div class="stage">${scopePane({ keep: list.length < rows.length ? new Set(list.map((r) => r.slug)) : null, top: 12, farms: 3 }, `${rows.length} protocols with no token on record`, 'named: top 12 by value, 3 best farms per dollar')}<div class="side">${evidence()}${ledgerBar()}${filterBar(list.length)}${table(list)}</div></div>`;
+  return `<div class="stage">${scopePane({ keep: list.length < rows.length ? new Set(list.map((r) => r.slug)) : null, top: 12, farms: 3 }, `${rows.length} with no token on record ${fn('drawScope')}`, 'names: top 12 by value, 3 top farms, where they fit')}<div class="side">${proofs()}${ledgerBar()}${filterBar(list.length)}${table(list)}</div></div>`;
 }
 
 // ── one protocol
@@ -78,22 +84,21 @@ function capStrip(r) {
     `<table>${each(near, (c) => `<tr><td><b>${esc(c.name)}</b></td><td>TVL ${$(c.tvl)}</td><td>real cap <b>${$(c.mcap)}</b></td><td>priced blind ${$(c.blind)}</td></tr>`)}</table>`;
 }
 function gantt(p) {
-  const end = p.hold + 8, px = (d) => 88 + d / end * 410, base = p.steps.length * 21 + 22, paid = Array(end + 1).fill(0);
+  const end = p.hold + 8, px = (d) => 88 + d / end * 460, base = p.steps.length * 17 + 20, paid = Array(end + 1).fill(0);
   const bars = each(p.steps, (s, i) => {
-    const y = 18 + i * 21, weekly = s.verb === 'Upkeep', weeks = Array.from({ length: p.weeks }, (_, w) => w * 7 + 7);
+    const y = 14 + i * 17, weekly = s.verb === 'Upkeep', weeks = Array.from({ length: p.weeks }, (_, w) => w * 7 + 7);
     if (weekly) weeks.forEach((d) => { paid[Math.min(end, d)] += s.usd / p.weeks; }); else paid[s.from] += s.usd;
-    return text('nm', 0, y + 15, `${i + 1} ${s.verb}`) + (weekly ? each(weeks, (d) => box('gain', px(d), y + 4, 8, 12)) : box(s.verb === 'Stop rule' ? 'band' : '', px(s.from), y + 4, Math.max(7, px(s.to) - px(s.from)), 12)) + text('fig', 640, y + 15, `${s.usd ? $(s.usd) : 'free'} · ${s.min} min`);
+    return text('nm', 0, y + 15, `${i + 1} ${s.verb}`) + (weekly ? each(weeks, (d) => box('gain', px(d), y + 4, 8, 12)) : box(s.verb === 'Stop rule' ? 'band' : '', px(s.from), y + 4, Math.max(7, px(s.to) - px(s.from)), 12));
   });
   let sum = 0, path = `M88 ${base + 36}`;
   paid.forEach((v, d) => { path += `H${px(d)}V${base + 36 - (sum += v) / (p.fees || 1) * 28}`; });
   return svg(640, base + 42, each([0, 14, 28, 42, 56, 70, 84].filter((d) => d < p.hold), (d) => `<line x1="${px(d)}" x2="${px(d)}" y1="16" y2="${base + 40}"/>` + text('mid', px(d), 11, dayOf(d))) + `${bars}<path d="${path}"/>` + text('nm', 0, base + 30, 'Cost so far') + text('fig', 640, base + 26, `${$(p.fees)} · ${hrs(p.minutes)}`));
 }
 function detailView(r) {
-  const p = r.plan, reach = p.breakEven ? `Breaks even at a ${$(p.breakEven)} ticket` : `Beats the T-bill only if the deposit yields over ${yieldOf(p)} a year`;
+  const p = r.plan;
   return `<article class="one"><header><button data-go="p=">←</button><div><h1>${esc(r.name)}</h1><p>Rank ${r.rank} of ${rows.length} · ${r.tier} · ${esc(r.category)} on ${esc(r.chains.slice(0, 3).join(', '))} · TVL ${$(r.tvl)} · no token on record for ${since(r.age)}</p></div><div class="price"><b>${$(r.value)}</b><p>${$(r.low)} to ${$(r.high)}: half of blind misses</p></div></header>` +
-    `<div class="two"><section><h2>How ${$(r.value)} is built ${fn('impliedValue')}</h2>${waterfall(r)}${capStrip(r)}</section><section><h2>${p.label} on ${esc(p.chain)}: ${$(p.capital)} for ${p.hold} days ${tag(p.verdict)} ${fn('farmPlan')}</h2>${gantt(p)}<ol>${each(p.steps, (s) => `<li><b>${s.verb}</b> ${esc(s.what)} <b>${s.usd ? $(s.usd) : 'Free'}, ${s.min} min</b></li>`)}</ol>` +
-    cells([[$(p.slice), 'slice, if it launches'], [$(-p.fees), 'gas and fees'], [$(-p.forgone), 'T-bill given up'], [plus(p.net), `net, ${plus(p.perHour)} an hour`]]) +
-    `<p class="fine">${reach}. Worth it if a launch that pays depositors is likelier than ${p.oddsNeeded > 1 ? 'certain' : pc(p.oddsNeeded)}. Slice: 10% of the value by dollar-days, behind ${Math.round(p.ahead)} days already earned.</p></section></div></article>`;
+    `<div class="two"><section><h2>How ${$(r.value)} is built ${fn('impliedValue')}</h2>${waterfall(r)}${capStrip(r)}<p class="fine">${fn('checkBoard')}: ${proof.same}/${proof.of} rows equal board.json; this one is rank ${r.rank} at $${r.value.toLocaleString('en')}. Worth it if a launch that pays depositors is likelier than ${p.oddsNeeded > 1 ? 'certain' : pc(p.oddsNeeded)}. Slice: 10% of the value by dollar-days, behind ${Math.round(p.ahead)} days already earned.</p></section><section><h2>${p.label} on ${esc(p.chain)}: ${$(p.capital)} for ${p.hold} days ${tag(p.verdict)} ${fn('farmPlan')}</h2>${gantt(p)}<table class="steps"><tr><th>Step</th><th>Dates</th><th></th><th>Cost</th><th>Time</th></tr>${each(p.steps, (s, i) => `<tr><td><b>${i + 1} ${s.verb}</b></td><td>${dayOf(s.from)}${s.to > s.from ? `–${dayOf(s.to)}` : ''}</td><td>${esc(s.what)}</td><td><b>${s.usd ? $(s.usd) : 'free'}</b></td><td><b>${s.min} min</b></td></tr>`)}<tr><td><b>Total</b></td><td>${p.hold} days</td><td>${fn('costPlan')}</td><td><b>${$(p.fees)}</b></td><td><b>${hrs(p.minutes)}</b></td></tr></table>` +
+    cells([[$(p.slice), 'slice if launched'], [$(-p.fees), 'gas and fees'], [$(-p.forgone), 'T-bill forgone'], [plus(p.net), 'net'], [plus(p.perHour), 'net an hour'], [p.breakEven ? $(p.breakEven) : yieldOf(p), p.breakEven ? 'break-even ticket' : 'yield to break even']]) + '</section></div></article>';
 }
 
 // ── my budget
@@ -102,25 +107,22 @@ function plannerView() {
   const minutes = (k) => each(weeks, (_, w) => { const c = k.row.plan.calendar[w - k.start]; return c && c.min ? `<td class="on">${Math.round(c.min)}</td>` : '<td></td>'; });
   const total = (name, f, sum) => `<tr><td></td><td><b>${name}</b></td>${each(weeks, (w) => `<td>${f(w)}</td>`)}<td>${sum}</td></tr>`;
   const slide = (k, t, min, max, step, show) => `<label>${t}<b>${show}</b><input type="range" data-key="${k}" min="${min}" max="${max}" step="${step}" value="${ui[k]}"></label>`;
-  return `<div class="stage">${scopePane({ keep: new Set(list.map((r) => r.slug)), picks }, `${picks.length} farms picked of ${list.length} lit`, `${$(route.capital)} placed, up to ${ui.hours} h a week`)}<div class="side"><section class="budget"><h2>My budget ${fn('planRoute')}</h2>${slide('budget', 'Capital', 2500, 100000, 2500, $(+ui.budget))}${slide('hours', 'Hours a week', 1, 12, 0.5, ui.hours + ' h')}</section>` +
-    cells([[plus(route.net), 'net if all launch, after gas, fees and T-bill'], [plus(route.perHour), `an hour, over ${hrs(route.minutes)}`], [$(route.fees), `gas and fees; ${$(route.forgone)} T-bill given up`], [pc(route.shareNeeded), 'of the slices must arrive to break even']]) +
+  return `<div class="stage">${scopePane({ keep: new Set(list.map((r) => r.slug)), picks }, `${picks.length} farms picked of ${list.length} lit ${fn('drawScope')}`, `${$(route.capital)} placed, up to ${ui.hours} h a week`)}<div class="side"><section class="budget"><h2>My budget ${fn('planRoute')}</h2>${slide('budget', 'Capital', 2500, 100000, 2500, $(+ui.budget))}${slide('hours', 'Hours a week', 1, 12, 0.5, ui.hours + ' h')}</section>` +
+    cells([[plus(route.net), 'net of all costs, if all launch'], [plus(route.perHour), `an hour, over ${hrs(route.minutes)}`], [$(route.fees), `gas and fees; T-bill ${$(route.forgone)}`], [pc(route.shareNeeded), 'of the slices must arrive to break even']]) +
     `<table class="cal"><tr><th></th><th>Minutes by week</th>${each(weeks, (_, w) => `<th>${w % 3 || w > weeks.length - 3 ? '' : dayOf(w * 7)}</th>`)}<th>Net</th></tr>${each(picks, (k, i) => `<tr data-row="${k.row.slug}"><td><u>${i + 1}</u></td><td><b>${esc(k.row.name)}</b> ${$(k.row.plan.capital)}</td>${minutes(k)}<td><b>${plus(k.row.plan.net)}</b></td></tr>`)}` +
     `${total('Hours a week', (w) => (w.min / 60).toFixed(1), hrs(route.minutes))}${total('Dollars a week', (w) => w.usd.toFixed(w.usd < 10 ? 1 : 0), $(route.fees))}</table>${filterBar(list.length)}${table(list)}</div></div>`;
 }
 
-// ── the other tabs
-const plain = (title, heads, body) => `<h2>${title}</h2><table class="plain"><tr>${each(heads, (h) => `<th>${h}</th>`)}</tr>${each(body, (r) => `<tr>${each(r, (c) => `<td>${c}</td>`)}</tr>`)}</table>`;
+const plain = (title, heads, body) => `<h2>${title}</h2><table><tr>${each(heads, (h) => `<th>${h}</th>`)}</tr>${each(body, (r) => `<tr>${each(r, (c) => `<td>${c}</td>`)}</tr>`)}</table>`;
 const page = (s) => `<div class="page">${s}</div>`;
 const tradedView = () => page(plain(`${radar.tokens.length} never ranked, ${comps.length} are comps`,['Token', 'Sector', 'Family TVL', 'Market cap', 'Priced blind', 'Use'], [...radar.tokens].sort((a, b) => b.mcap - a.mcap).map((c) => [esc(c.name), c.sector, $(c.tvl), $(c.mcap), c.blind ? $(c.blind) : '', c.skip || 'comp'])));
 const asideView = () => page(plain(`${radar.aside.length} set aside by rule`,['Protocol', 'TVL', 'Set aside as'], radar.aside.map((a) => [esc(a.name), $(a.tvl), a.reason])));
-const methodView = () => page(`<p>Every traded token priced blind: each left out, and the ${tests.older} with 900+ days on record pricing the ${tests.newer} newer. A term stays if the average miss falls in both and neither typical miss grows by a tenth. Growth and time move a value little, as the traded tokens say. ${Object.keys(fit.sector).map((s) => `${s} ${x(10 ** fit.sector[s])} on ${fit.count[s]} comps`).join(', ')}.</p>` +
-  plain(`The ladder ${fn('backtest')}`, ['Term, added in order', 'Left out: typical', 'average', 'within 3×', 'Older→newer: typical', 'average', 'within 3×', ''], tests.ladder.map((t) => [t.name, ...[t.each, t.later].flatMap((s) => [x(s.miss), x(s.mean), pc(s.within3)]), t.base ? 'base' : t.kept ? '<b>kept</b>' : 'tested, not kept'])));
 
-// ── paint
-const TABS = { board: ['Radar', boardView], plan: ['Planner', plannerView], traded: ['Token trades', tradedView], aside: ['Set aside', asideView], method: ['Method', methodView] };
+const TABS = { board: ['Radar', boardView], plan: ['Planner', plannerView], traded: ['Token trades', tradedView], aside: ['Set aside', asideView] };
 const [top, main] = ['#top', '#app'].map((s) => document.querySelector(s));
 function paint() {
-  const one = rows.find((r) => r.slug === ui.p), listed = rows.filter((r) => r.tier === 'watchlist').length, key = document.activeElement.dataset.key, badge = (ok, t) => `<span class="badge ${ok}">${t}</span>`;
+  const one = rows.find((r) => r.slug === ui.p), key = document.activeElement.dataset.key, badge = (ok, t) => `<span class="badge ${ok}">${t}</span>`;
+  top.title = PAGE_IS;
   top.innerHTML = `<a href="#"><i>◎</i> Token Radar</a><nav>${each(Object.keys(TABS), (k) => `<button data-go="view=${k}" class="${!one && ui.view === k && 'on'}">${TABS[k][0]}</button>`)}</nav><span>DefiLlama ${radar.asOf}</span>${badge(listed === counts.watchlist, `Watchlist ${listed}/${counts.watchlist}`)}${badge(proof.ok, `checkBoard() ${proof.same}/${proof.of} = board.json`)}`;
   main.innerHTML = one ? detailView(one) : (TABS[ui.view] || TABS.board)[1]();
   const again = key && document.querySelector(`[data-key=${key}]`);
@@ -142,7 +144,7 @@ document.addEventListener('click', (e) => {
   else go({ q: '', ...Object.fromEntries(Object.keys(FILTERS).map((k) => [k, ''])) });
 });
 for (const type of ['input', 'change']) document.addEventListener(type, ({ target: t }) => { if (t.dataset.key && (t.type === 'range') === (type === 'change')) go({ [t.dataset.key]: t.value }); });   // a slider repaints when let go
-document.addEventListener('mouseover', (e) => {   // row and blip light together
+document.addEventListener('mouseover', (e) => {
   const el = e.target.closest('[data-row]');
   for (const n of document.querySelectorAll('[data-row]')) n.classList.toggle('hot', !!el && n.dataset.row === el.dataset.row);
 });
