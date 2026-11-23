@@ -15,8 +15,9 @@ import { buildDossier } from './vendor/makefun-board.ts';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const load = createRequire(import.meta.url);
-const model = load('./dashboard/1-model.js');
-load('./dashboard/3-plans.js');                 // adds farmPlan, addPlans and stepStrings to the same object
+load('./dashboard/1-model.js');                 // puts Radar on globalThis, as it does in the page
+load('./dashboard/3-plans.js');                 // adds farmPlan, addPlans and stepStrings to it
+const model = (globalThis as any).Radar;
 
 type Snapshot = { as_of: string; source: string; floor_usd: number; watchlist: string[]; protocols: Array<{ slug: string }> };
 
@@ -113,7 +114,7 @@ function writeAll(out: string, snap: Snapshot, rows: Row[], withDossier: boolean
   mirror(path.join(ROOT, 'dashboard'), path.join(out, 'dashboard'));
   const shots = mirror(path.join(ROOT, 'screenshots'), path.join(out, 'screenshots'));
   if (withDossier && shots.length < 3) fail(1, `screenshots/ holds ${shots.length} images; the gate wants 3 (board, detail, filtered)`);
-  if (shots.length >= 3) {
+  if (withDossier) {
     // last, because the scorer rebuilds the dossier from this folder and compares bytes
     const dossier = buildDossier(out, { text_max_bytes: 65_536, screenshots: { max: 4, max_bytes: 524_288 }, dashboard: { max_files: 400, max_bytes: 4_194_304 } });
     fs.writeFileSync(path.join(out, 'dossier.json'), dossier);
