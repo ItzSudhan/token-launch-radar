@@ -1,17 +1,15 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Token Radar</title>
-  <link rel="stylesheet" href="3-style.css">
-</head>
-<body>
-  <header id="top"></header>
-  <main id="app"><p class="boot">No data yet: main.ts writes ../data.js beside this folder.</p></main>
-  <footer id="foot">Every implied value here is this radar's own estimate from a single DefiLlama snapshot: not a forecast, and not financial advice. "Records no token" describes DefiLlama's record; it does not prove that no token exists.</footer>
-  <script src="../data.js"></script>
-  <script src="1-model.js"></script>
-  <script src="2-app.js"></script>
-</body>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Radar</title>
+<link rel="stylesheet" href="5-style.css">
+<header id="top"></header>
+<main id="app">main.ts writes ../data.js beside this folder; without it the scope is empty.</main>
+<footer id="foot">Implied values are this radar's own estimates from one DefiLlama snapshot, not forecasts and not financial advice. "No token on record" is DefiLlama's record, not proof that none exists.</footer>
+<script src="../data.js"></script>
+<script src="1-model.js"></script>
+<script src="2-scope.js"></script>
+<script src="3-plans.js"></script>
+<script src="4-app.js"></script>
 </html>

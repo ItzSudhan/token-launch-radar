@@ -1,12 +1,11 @@
-// Token Radar · entrypoint.
-// Reads the sealed DefiLlama snapshot, asks the model for the board, refuses to write a board the gate
-// would reject, then writes board.json, the page's data.js, the dashboard and screenshots, and the dossier.
+// Token Radar · main.ts
+// snapshot in -> the model prices it -> the plans cost it -> the gate's own rules are checked -> files out.
 //
-// The model lives in dashboard/1-model.js, the very file the page loads: main.ts and the page run the same
-// code on the same bytes, and the page's checkBoard() proves it row by row.
+// Two of the page's own files do the work: dashboard/1-model.js (values) and dashboard/3-plans.js (farm plans).
+// The page loads the same two on the same bytes, and its checkBoard() compares every row with board.json.
 //
 //   node main.ts [--input <dir or snapshot.json>] [--output <dir>] [--no-dossier]
-//   (MAKEFUN_OUTPUT_DIR stands in for --output; the defaults are /input and /output)
+//   MAKEFUN_INPUT_DIR and MAKEFUN_OUTPUT_DIR stand in for the flags; the defaults are /input and /output
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -15,15 +14,18 @@ import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const model = createRequire(import.meta.url)('./dashboard/1-model.js');
+const load = createRequire(import.meta.url);
+const model = load('./dashboard/1-model.js');
+load('./dashboard/3-plans.js');                 // adds farmPlan, addPlans and stepStrings to the same object
 
 type Snapshot = { as_of: string; source: string; floor_usd: number; watchlist: string[]; protocols: Array<{ slug: string }> };
 
-/** One board.json row. Key order is the file's column order. */
+/** One board.json row; the keys stand in the file in this order. */
 type Row = {
   rank: number; slug: string; name: string;
   implied_value_usd: number; implied_low_usd: number; implied_high_usd: number;
-  tier: string; sector: string; verdict: string; net_usd: number;
+  tier: string; sector: string; kinship: string;
+  verdict: string; ticket_usd: number; net_usd: number; hours: number;
   farm_steps: string[];
 };
 
@@ -33,7 +35,7 @@ function option(flag: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 function locations() {
-  const given = option('--input') ?? '/input';
+  const given = option('--input') ?? process.env.MAKEFUN_INPUT_DIR ?? '/input';
   return {
     snapshot: given.endsWith('.json') ? given : path.join(given, 'snapshot.json'),
     output: option('--output') ?? process.env.MAKEFUN_OUTPUT_DIR ?? '/output',
@@ -48,19 +50,16 @@ function readSnapshot(file: string): Snapshot {
   if (!shaped) fail(2, `${file} is not a snapshot: it needs as_of, protocols and watchlist`);
   return s;
 }
+/** The board's row, read off the model's: dollars are whole, the range is the one half the blind misses fall in. */
 function toRow(r: any): Row {
+  const { plan } = r;
+  const cents = (x: number) => Math.round(x * 100) / 100;
   return {
-    rank: r.rank,
-    slug: r.slug,
-    name: r.name,
-    implied_value_usd: r.value,                 // what a launch would be worth with the record as it stands
-    implied_low_usd: Math.round(r.low),         // the range holds half the blind-priced tokens like it
-    implied_high_usd: Math.round(r.high),
-    tier: r.tier,
-    sector: r.sector,
-    verdict: r.plan.verdict,
-    net_usd: Math.round(r.plan.net * 100) / 100,
-    farm_steps: model.stepStrings(r.plan),
+    rank: r.rank, slug: r.slug, name: r.name,
+    implied_value_usd: r.value, implied_low_usd: Math.round(r.low), implied_high_usd: Math.round(r.high),
+    tier: r.tier, sector: r.sector, kinship: r.kin,
+    verdict: plan.verdict, ticket_usd: plan.capital, net_usd: cents(plan.net), hours: cents(plan.minutes / 60),
+    farm_steps: model.stepStrings(plan),
   };
 }
 
@@ -124,16 +123,19 @@ function writeAll(out: string, snap: Snapshot, rows: Row[], withDossier: boolean
 
 // ---- 5. say what was written
 function report(snap: Snapshot, radar: any, rows: Row[]): string {
-  const { tests, ranges } = radar, full = tests.ladder[3];
-  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  const { tests, ranges } = radar;
   const count = (v: string) => rows.filter((r) => r.verdict === v).length;
-  return [
-    `token radar: ${snap.protocols.length} protocols, ${rows.length} ranked (${snap.watchlist.length} watchlist), ${radar.comps.length} comparables, ${radar.aside.length} set aside; top ${rows[0]!.name} at $${rows[0]!.implied_value_usd}`,
+  const both = (t: any) => `x${t.each.miss.toFixed(2)} typical, x${t.each.mean.toFixed(2)} average, each left out; x${t.later.miss.toFixed(2)} and x${t.later.mean.toFixed(2)} older to newer (${tests.older} -> ${tests.newer})`;
+  const lines = [
+    `token radar: ${snap.protocols.length} protocols, ${rows.length} ranked (${snap.watchlist.length} watchlist), ${radar.comps.length} comps, ${radar.aside.length} set aside`,
     `ledger: ${radar.ledger.map((g: [string, number]) => `${g[1]} ${g[0].toLowerCase()}`).join(' + ')}`,
-    `value miss, held out: x${full.miss.toFixed(2)} each-left-out (${pct(full.within3)} within 3x), x${full.split.miss.toFixed(2)} older-to-newer (${tests.older} -> ${tests.newer})`,
-    `range (half of blind misses) holds: ${ranges.each}/${ranges.n} each-left-out, ${ranges.split}/${ranges.newer} older-to-newer`,
-    `on $1,000: ${count('FARM')} FARM, ${count('THIN')} THIN, ${count('SKIP')} SKIP`,
-  ].join('\n') + '\n';
+    `blind miss: ${both(tests.full)}`,
+    `flat multiple: ${both(tests.flat)}`,
+    `half-of-misses range holds ${ranges.each}/${ranges.n} each left out, ${ranges.later}/${ranges.newer} older to newer`,
+    `at the suggested tickets: ${count('FARM')} FARM, ${count('THIN')} THIN, ${count('SKIP')} SKIP`,
+    ...rows.slice(0, 15).map((r) => `${String(r.rank).padStart(3)}  ${r.name}  $${r.implied_value_usd}  ${r.kinship}  ${r.verdict}`),
+  ];
+  return lines.join('\n') + '\n';
 }
 
 function fail(code: number, why: string): never {
@@ -145,6 +147,7 @@ function fail(code: number, why: string): never {
 const where = locations();
 const snap = readSnapshot(where.snapshot);
 const radar = model.buildRadar(snap);
+model.addPlans(radar.rows);                     // each at its suggested ticket, as the page shows it by default
 const rows: Row[] = radar.rows.map(toRow);
 const problems = gateProblems(snap, rows);
 if (problems.length) fail(1, `the board would fail the gate: ${problems.slice(0, 3).join('; ')}`);
