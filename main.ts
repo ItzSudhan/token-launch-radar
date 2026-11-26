@@ -15,8 +15,9 @@ import { buildDossier } from './vendor/makefun-board.ts';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const load = createRequire(import.meta.url);
-load('./dashboard/1-model.js');                 // puts Radar on globalThis, as it does in the page
-load('./dashboard/3-plans.js');                 // adds farmPlan, addPlans and stepStrings to it
+load('./dashboard/1-model.js');                 // puts Radar on globalThis, as it does in the page: launchValue, valueLadder
+load('./dashboard/2-odds.js');                  // adds oddsModel (launchOdds, oddsLadder) and bootstrapSE
+load('./dashboard/3-plans.js');                 // adds farmPlan, addPlans and stepStrings
 const model = (globalThis as any).Radar;
 
 type Snapshot = { as_of: string; source: string; floor_usd: number; watchlist: string[]; protocols: Array<{ slug: string }> };
@@ -25,6 +26,7 @@ type Snapshot = { as_of: string; source: string; floor_usd: number; watchlist: s
 type Row = {
   rank: number; slug: string; name: string;
   implied_value_usd: number; implied_low_usd: number; implied_high_usd: number;
+  launch_value_usd: number; launch_odds: number;
   tier: string; sector: string; kinship: string;
   verdict: string; ticket_usd: number; net_usd: number; hours: number;
   farm_steps: string[];
@@ -51,13 +53,15 @@ function readSnapshot(file: string): Snapshot {
   if (!shaped) fail(2, `${file} is not a snapshot: it needs as_of, protocols and watchlist`);
   return s;
 }
-/** The board's row, read off the model's: dollars are whole, the range is the one half the blind misses fall in. */
+/** The board's row, read off the model's: implied = launch value × launch odds, in whole dollars; the range is the
+ *  25th to 75th percentile of the blind misses. */
 function toRow(r: any): Row {
   const { plan } = r;
   const cents = (x: number) => Math.round(x * 100) / 100;
   return {
     rank: r.rank, slug: r.slug, name: r.name,
     implied_value_usd: r.value, implied_low_usd: Math.round(r.low), implied_high_usd: Math.round(r.high),
+    launch_value_usd: Math.round(r.launch), launch_odds: Math.round(r.chance * 1e4) / 1e4,
     tier: r.tier, sector: r.sector, kinship: r.kin,
     verdict: plan.verdict, ticket_usd: plan.capital, net_usd: cents(plan.net), hours: cents(plan.minutes / 60),
     farm_steps: model.stepStrings(plan),
@@ -124,17 +128,20 @@ function writeAll(out: string, snap: Snapshot, rows: Row[], withDossier: boolean
 
 // ---- 5. say what was written
 function report(snap: Snapshot, radar: any, rows: Row[]): string {
-  const { tests, ranges } = radar;
+  const { tests, ranges, odds, se } = radar;
   const count = (v: string) => rows.filter((r) => r.verdict === v).length;
-  const both = (t: any) => `x${t.each.miss.toFixed(2)} typical, x${t.each.mean.toFixed(2)} average, each left out; x${t.later.miss.toFixed(2)} and x${t.later.mean.toFixed(2)} older to newer (${tests.older} -> ${tests.newer})`;
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
   const lines = [
     `token radar: ${snap.protocols.length} protocols, ${rows.length} ranked (${snap.watchlist.length} watchlist), ${radar.comps.length} comps, ${radar.aside.length} set aside`,
     `ledger: ${radar.ledger.map((g: [string, number]) => `${g[1]} ${g[0].toLowerCase()}`).join(' + ')}`,
-    `blind miss: ${both(tests.full)}`,
-    `flat multiple: ${both(tests.flat)}`,
-    `half-of-misses range holds ${ranges.each}/${ranges.n} each left out, ${ranges.later}/${ranges.newer} older to newer`,
+    `valueLadder (median miss, each left out | older ${tests.older} -> newer ${tests.newer}):`,
+    ...tests.ladder.map((t: any) => `  ${t.name.padEnd(28)} x${t.each.miss.toFixed(2)} | x${t.later.miss.toFixed(2)}  ${t.base ? 'base' : t.kept ? 'kept' : 'not kept'}`),
+    `oddsLadder (Brier, ten-fold | older ${odds.older} -> newer ${odds.newer}), ${odds.tokens} of ${odds.n} peers carry a token:`,
+    ...odds.ladder.map((t: any) => `  ${t.name.padEnd(28)} ${t.ten.toFixed(4)} | ${t.walk.toFixed(4)}  ${t.base ? 'base' : t.kept ? 'kept' : 'not kept'}`),
+    `rangeHonesty: 50% range holds ${pct(ranges.each50)} left out, ${pct(ranges.later50)} newer; 80% range ${pct(ranges.each80)} and ${pct(ranges.later80)}`,
+    `bootstrapSE (${se.boots} refits, seed ${se.seed}): b ${radar.fit.b.toFixed(3)} ± ${se.value.b.toFixed(3)}; odds ${odds.names.map((n: string, i: number) => `${n} ${odds.w[i].toFixed(2)} ± ${se.odds[i].toFixed(2)}`).join('; ')}`,
     `at the suggested tickets: ${count('FARM')} FARM, ${count('THIN')} THIN, ${count('SKIP')} SKIP`,
-    ...rows.slice(0, 15).map((r) => `${String(r.rank).padStart(3)}  ${r.name}  $${r.implied_value_usd}  ${r.kinship}  ${r.verdict}`),
+    ...rows.slice(0, 15).map((r) => `${String(r.rank).padStart(3)}  ${r.name}  $${r.launch_value_usd} x ${r.launch_odds} = $${r.implied_value_usd}  ${r.kinship}  ${r.verdict}`),
   ];
   return lines.join('\n') + '\n';
 }

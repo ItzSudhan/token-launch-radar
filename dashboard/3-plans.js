@@ -1,13 +1,12 @@
-/* 3 · Criterion 3, farm plans: eight dated steps a row, each with dollars and minutes. Checked: stepStrings() writes these
-   steps to board.json and checkBoard() compares their digest on the page.
-   costPlan   the steps, then slice − fees − T-bill = net       playOf  category -> one of nine plays (PLAYS, below)
-   farmPlan   the smallest ticket that pays $25 an hour     planRoute  the farms that fit a budget, by week */
+/* 3 · Criterion 3, farm plans: eight dated steps a row, each with dollars and minutes. Checked: stepStrings() writes them to
+   board.json and checkBoard() compares their digest on the page.
+   costPlan  slice − gas and fees − T-bill = net; slice = implied value × 10% × this ticket's share of dollar-days
+   farmPlan  the smallest ticket that pays $25 an hour;  playOf  category -> one of nine plays;  planRoute  farms in a budget */
 (function (root) {
 const R = root.Radar, { usd } = R;
 const RULES = { tickets: [250, 500, 1000, 2500, 5000, 10000, 25000], wage: 25, share: 0.10, tbill: 0.04, pointsWindow: 365, ofTvl: 0.01 };
 
-/** slice = implied value × airdrop share × this ticket's dollar-days / everyone's: deposits already in count half the days
- *  the row has run with no token, a year at most. net = slice − fees − the T-bill yield the ticket gives up. */
+/** Deposits already in count half the days the row has run with no token, a year at most. */
 function costPlan(row, C) {
   const how = PLAYS[playOf(row)], N = row.name, H = how.hold, weeks = Math.round(H / 7), chain = farmChain(row.chains), [gas, fund] = chainCost(chain), asset = assetOf(row, chain);
   const fill = (t) => t.replace('{V}', VENUE[row.category] || '{N}').replace(/\{C(\/\d+)?\}/g, (_, d) => usd(d ? C / +d.slice(1) : C)).replace('{A}', asset).replace(/\{N\}/g, N).replace('{chain}', chain);
@@ -30,7 +29,7 @@ function costPlan(row, C) {
   const forgone = C * RULES.tbill * H / 365, net = slice - fees - forgone, perHour = net / (minutes / 60);
   const scaling = C * (how.pct[0] + weeks * how.pct[1] + how.carry * H / 365), perDollar = (slice - scaling - forgone) / C;
   return { label: how.label, chain, hold: H, weeks, capital: C, ahead, steps, calendar: calendarOf(steps, weeks), fees, minutes, forgone, slice, net, perHour, verdict: perHour >= RULES.wage ? 'FARM' : slice > fees ? 'THIN' : 'SKIP',
-    oddsNeeded: (fees + forgone) / slice, yieldNeeded: Math.max(0, (fees + forgone - slice) / C * 365 / H), breakEven: perDollar > 0 ? (fees - scaling) / perDollar : null };
+    yieldNeeded: Math.max(0, (fees + forgone - slice) / C * 365 / H), breakEven: perDollar > 0 ? (fees - scaling) / perDollar : null };
 }
 /** FARM: the smallest ticket that pays $25 an hour net. THIN: the slice beats fees. SKIP: no slice does. */
 function farmPlan(row) {
@@ -49,7 +48,7 @@ function calendarOf(steps, weeks) {
 const addPlans = (rows) => rows.forEach((r) => { r.plan = farmPlan(r); });
 const stepStrings = (plan) => plan.steps.map((s) => `${s.verb} (${s.to > s.from ? `days ${s.from} to ${s.to}` : `day ${s.from}`}): ${s.what} Cost: ${s.usd ? usd(s.usd) : 'nothing'}. Time: ${s.min} min${s.verb === 'Upkeep' ? ' in all' : ''}.`);
 
-// tx: transactions to [enter, qualify, each week, exit] · pct: fees on the ticket [once, each week] · carry: interest a year
+// tx: [enter, qualify, weekly, exit] · pct: ticket fees [once, weekly] · carry: interest a year
 const play = (label, hold, tx, pct, carry, min, enter, qualify, watch, stop, gateFirst) => ({ label, hold, tx, pct, carry, min, enter, qualify, watch, stop, gateFirst });
 const PLAYS = {
   vault: play('Vault deposit', 90, [2, 0, 0, 1], [0, 0], 0, [10, 5, 5],
@@ -93,11 +92,9 @@ const BY_CATEGORY = { 'Uncollateralized Lending': 'vault', 'Collateral Markets':
   'Staking Pool': 'stake', 'Governance Incentives': 'stake', Insurance: 'stake', 'Anchor BTC': 'mint', 'Decentralized BTC': 'mint', 'Interest Rate Derivatives': 'vault' };
 const BY_SECTOR = { Vaults: 'vault', Dollars: 'mint', RWA: 'rwa', Lending: 'lend', Trading: 'trade', Network: 'network' };
 const playOf = (row) => BY_CATEGORY[row.category] || BY_SECTOR[row.sector];
-const VENUE = {   // what the reader opens, by DefiLlama category
-  'Risk Curators': "{N}'s largest curated vault (open it on the lending market that hosts it)", 'Onchain Capital Allocator': "{N}'s largest managed vault", Yield: "{N}'s largest open yield position",
-  'Yield Aggregator': "{N}'s largest auto-compounding vault", 'Uncollateralized Lending': "{N}'s shortest-lock pool", 'Basis Trading': "{N}'s basis-trade dollar",
-};
-// [gas per transaction, fee to fund the wallet from an exchange] in dollars, stated
+const VENUE = { 'Risk Curators': "{N}'s largest curated vault (on the lending market that hosts it)", 'Onchain Capital Allocator': "{N}'s largest managed vault",
+  'Yield Aggregator': "{N}'s largest auto-compounding vault", 'Uncollateralized Lending': "{N}'s shortest-lock pool", 'Basis Trading': "{N}'s basis-trade dollar" };
+// stated dollars: [gas a transaction, exchange withdrawal fee]
 const CHAIN_COST = { Ethereum: [2.5, 4], Bitcoin: [1.5, 2], Tron: [1, 1.5], Binance: [0.1, 0.3], Polygon: [0.01, 0.3], Solana: [0.005, 1], Sui: [0.005, 0.5], Stellar: [0.001, 0.2],
   Base: [0.03, 0.5], Arbitrum: [0.03, 0.5], Optimism: [0.03, 0.5], Monad: [0.01, 1], 'Hyperliquid L1': [0.01, 1] };
 const chainCost = (chain) => CHAIN_COST[chain] || [0.05, 1.5];
@@ -105,8 +102,7 @@ const farmChain = (chains) => chains.slice(0, 3).sort((a, b) => chainCost(a)[0] 
 const assetOf = (row, chain) => /BTC/.test(row.category) || /^(Bitcoin|RSK|Stacks|BSquared|CORE|Hemi)$/.test(chain) ? 'BTC' : chain === 'Tron' ? 'USDT' : 'USDC (or the asset it takes)';
 const emptyWeeks = (n) => Array.from({ length: n }, () => ({ min: 0, usd: 0 }));
 
-/** FARM rows by net per share of the money and hours they use; each that fits starts in the first of four weeks where
- *  its whole calendar stays inside the hours. One farm per name stem. */
+/** FARM rows by net per share of money and hours used, each started in the first week its calendar fits; one per stem. */
 function planRoute(rows, budget) {
   const weeks = emptyWeeks(18), picks = [], seen = {}, score = ({ plan: p }) => p.net / (p.capital / budget.capital + p.minutes / (budget.hours * 600));
   let left = budget.capital;
