@@ -1,8 +1,9 @@
 // Token Radar · main.ts
 // snapshot in -> the model prices it -> the plans cost it -> the gate's own rules are checked -> files out.
 //
-// Two of the page's own files do the work: dashboard/1-model.js (values) and dashboard/3-plans.js (farm plans).
-// The page loads the same two on the same bytes, and its checkBoard() compares every row with board.json.
+// Three of the page's own files do the work: dashboard/1-model.js (launch value, valueLadder), dashboard/2-odds.js
+// (launch odds, oddsLadder, bootstrapSE) and dashboard/3-plans.js (farm plans). implied value = launch value × odds.
+// The page loads the same three on the same bytes, and its checkBoard() compares every row with board.json.
 //
 //   node main.ts [--input <dir or snapshot.json>] [--output <dir>] [--no-dossier]
 //   MAKEFUN_INPUT_DIR and MAKEFUN_OUTPUT_DIR stand in for the flags; the defaults are /input and /output
@@ -84,6 +85,7 @@ function gateProblems(snap: Snapshot, rows: Row[]): string[] {
     const v = r.implied_value_usd;
     if (!Number.isSafeInteger(v) || v < 1 || v > 1e14) problems.push(`${where}: implied value ${v}`);
     if (i > 0 && v > rows[i - 1]!.implied_value_usd) problems.push(`${where}: value rises down the board`);
+    if (!(r.launch_odds > 0 && r.launch_odds < 1) || !(r.launch_value_usd > 0)) problems.push(`${where}: launch value ${r.launch_value_usd}, odds ${r.launch_odds}`);
     const n = r.farm_steps.length;
     if (n < 3 || n > 12) problems.push(`${where}: ${n} farm steps`);
     for (const step of r.farm_steps) {
